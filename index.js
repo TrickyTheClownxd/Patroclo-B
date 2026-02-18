@@ -1,203 +1,182 @@
-import { Client, GatewayIntentBits } from "discord.js";
-import express from "express";
-import dotenv from "dotenv";
-import fs from "fs";
+const { Client, GatewayIntentBits } = require("discord.js");
+const fs = require("fs");
 
-dotenv.config();
-
-// ===== EXPRESS =====
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get("/", (req, res) => {
-  res.send("🔥 Patroclo B V3 está activo...");
-});
-
-app.listen(PORT, () => {
-  console.log(`Servidor Express activo en puerto ${PORT}`);
-});
-
-// ===== DISCORD =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildEmojisAndStickers
   ]
 });
 
-// ===== MEMORIA =====
-const MEMORY_FILE = "./memory.json";
+// ====== BASE DE DATOS ======
+let memory = {};
+let emojis = [];
+let customEmojis = [];
+let stickers = [];
 
-let memory = {
-  markovChain: {},
-  learnedSentences: [],
-  learnedEmojis: [],
-  learnedCustomEmojis: [],
-  learnedStickers: [],
-  userMemory: {},
-  mood: "neutral"
-};
-
-if (fs.existsSync(MEMORY_FILE)) {
-  memory = JSON.parse(fs.readFileSync(MEMORY_FILE));
+if (fs.existsSync("memory.json")) {
+  memory = JSON.parse(fs.readFileSync("memory.json"));
 }
 
+if (fs.existsSync("extras.json")) {
+  const data = JSON.parse(fs.readFileSync("extras.json"));
+  emojis = data.emojis || [];
+  customEmojis = data.customEmojis || [];
+  stickers = data.stickers || [];
+}
+
+// ====== GUARDAR ======
 function saveMemory() {
-  fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
+  fs.writeFileSync("memory.json", JSON.stringify(memory, null, 2));
 }
 
-// ===== APRENDER =====
+function saveExtras() {
+  fs.writeFileSync("extras.json", JSON.stringify({
+    emojis,
+    customEmojis,
+    stickers
+  }, null, 2));
+}
+
+// ====== APRENDER ======
 function learnFromMessage(message) {
-  const text = message.content;
-
-  if (text.length > 5 && text.length < 200) {
-    memory.learnedSentences.push(text);
-    if (memory.learnedSentences.length > 500) {
-      memory.learnedSentences.shift();
-    }
-  }
-
-  const words = text
+  const words = message.content
     .toLowerCase()
-    .replace(/[^a-z0-9áéíóúñ\s]/gi, "")
+    .replace(/[^\w\sáéíóúñ<>:]/gi, "")
     .split(/\s+/)
-    .filter(w => w.length > 2);
+    .filter(Boolean);
 
-  for (let i = 0; i < words.length - 2; i++) {
-    const key = words[i] + " " + words[i + 1];
-    const nextWord = words[i + 2];
+  for (let i = 0; i < words.length - 1; i++) {
+    const word = words[i];
+    const next = words[i + 1];
 
-    if (!memory.markovChain[key]) {
-      memory.markovChain[key] = [];
+    if (!memory[word]) {
+      memory[word] = [];
     }
 
-    memory.markovChain[key].push(nextWord);
+    memory[word].push(next);
   }
 
-  if (!memory.userMemory[message.author.id]) {
-    memory.userMemory[message.author.id] = [];
-  }
-
-  memory.userMemory[message.author.id].push(text);
-  if (memory.userMemory[message.author.id].length > 50) {
-    memory.userMemory[message.author.id].shift();
-  }
-
-  const emojiRegex = /\p{Emoji}/gu;
-  const emojis = text.match(emojiRegex);
-  if (emojis) {
-    emojis.forEach(e => memory.learnedEmojis.push(e));
-  }
-
-  const customEmojiRegex = /<a?:\w+:\d+>/g;
-  const customEmojis = text.match(customEmojiRegex);
-  if (customEmojis) {
-    customEmojis.forEach(e => memory.learnedCustomEmojis.push(e));
-  }
-
-  if (message.stickers.size > 0) {
-    message.stickers.forEach(sticker => {
-      memory.learnedStickers.push(sticker.id);
+  // Emojis normales
+  const emojiMatches = message.content.match(/[\p{Emoji}]/gu);
+  if (emojiMatches) {
+    emojiMatches.forEach(e => {
+      if (!emojis.includes(e)) {
+        emojis.push(e);
+      }
     });
   }
 
-  if (text.includes("jaja") || text.includes("😂")) {
-    memory.mood = "divertido";
-  } else if (text.includes("enojo") || text.includes("rabia")) {
-    memory.mood = "agresivo";
-  } else if (text.includes("triste")) {
-    memory.mood = "oscuro";
+  // Emojis personalizados
+  const customMatches = message.content.match(/<a?:\w+:\d+>/g);
+  if (customMatches) {
+    customMatches.forEach(e => {
+      if (!customEmojis.includes(e)) {
+        customEmojis.push(e);
+      }
+    });
+  }
+
+  // Stickers
+  if (message.stickers.size > 0) {
+    message.stickers.forEach(sticker => {
+      if (!stickers.includes(sticker.id)) {
+        stickers.push(sticker.id);
+      }
+    });
   }
 
   saveMemory();
+  saveExtras();
 }
 
-// ===== GENERADOR =====
-function generateSentence(maxLength = 15) {
-  const keys = Object.keys(memory.markovChain);
-  if (keys.length === 0) return "Estoy aprendiendo...";
+// ====== GENERAR FRASE ======
+function generateSentence(maxLength = 12) {
+  const keys = Object.keys(memory);
+  if (keys.length === 0) return "no sé qué decir todavía";
 
-  let currentKey = keys[Math.floor(Math.random() * keys.length)];
-  let sentence = currentKey.split(" ");
+  let word = keys[Math.floor(Math.random() * keys.length)];
+  let sentence = [word];
 
   for (let i = 0; i < maxLength; i++) {
-    const nextWords = memory.markovChain[currentKey];
+    const nextWords = memory[word];
     if (!nextWords || nextWords.length === 0) break;
 
-    const nextWord =
-      nextWords[Math.floor(Math.random() * nextWords.length)];
-
-    sentence.push(nextWord);
-
-    currentKey =
-      sentence[sentence.length - 2] + " " +
-      sentence[sentence.length - 1];
+    const next = nextWords[Math.floor(Math.random() * nextWords.length)];
+    sentence.push(next);
+    word = next;
   }
 
-  let base = sentence.join(" ");
-
-  if (memory.mood === "agresivo") base += " 🔥";
-  if (memory.mood === "divertido") base += " 😂";
-  if (memory.mood === "oscuro") base += " 👁️";
-
-  return base;
+  return sentence.join(" ");
 }
 
 function randomEmoji() {
-  if (memory.learnedEmojis.length === 0) return "";
-  return memory.learnedEmojis[Math.floor(Math.random() * memory.learnedEmojis.length)];
+  if (emojis.length === 0) return "";
+  return emojis[Math.floor(Math.random() * emojis.length)];
 }
 
 function randomCustomEmoji() {
-  if (memory.learnedCustomEmojis.length === 0) return "";
-  return memory.learnedCustomEmojis[Math.floor(Math.random() * memory.learnedCustomEmojis.length)];
+  if (customEmojis.length === 0) return "";
+  return customEmojis[Math.floor(Math.random() * customEmojis.length)];
 }
 
 function randomSticker() {
-  if (memory.learnedStickers.length === 0) return null;
-  return memory.learnedStickers[Math.floor(Math.random() * memory.learnedStickers.length)];
+  if (stickers.length === 0) return null;
+  return stickers[Math.floor(Math.random() * stickers.length)];
 }
 
-// ===== READY =====
-client.once("clientReady", () => {
-  console.log(`🔥 Patroclo B V3 online como ${client.user.tag}`);
-});
-
-// ===== MENSAJES =====
+// ====== EVENTO MENSAJES (ARREGLADO) ======
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
   learnFromMessage(message);
 
   const mentioned = message.mentions.has(client.user);
-  const replied = message.reference;
 
-  const shouldRespond = mentioned || replied;
+  let repliedToBot = false;
 
+  if (message.reference) {
+    try {
+      const repliedMessage = await message.channel.messages.fetch(
+        message.reference.messageId
+      );
+
+      if (repliedMessage.author.id === client.user.id) {
+        repliedToBot = true;
+      }
+    } catch (err) {
+      console.log("No se pudo verificar reply");
+    }
+  }
+
+  const shouldRespond = mentioned || repliedToBot;
+
+  const sentence = generateSentence(12);
+  const emoji = randomEmoji();
+  const customEmoji = randomCustomEmoji();
+  const sticker = randomSticker();
+
+  // Si lo mencionan o responden → responde SIEMPRE
   if (shouldRespond) {
-    const sentence = generateSentence(12);
-    const emoji = randomEmoji();
-    const customEmoji = randomCustomEmoji();
-    const sticker = randomSticker();
-
     if (sticker && Math.random() < 0.3) {
       return message.channel.send({
-        content: sentence + " " + emoji + " " + customEmoji,
+        content: `${sentence} ${emoji} ${customEmoji}`,
         stickers: [sticker]
       });
     } else {
       return message.channel.send(
-        sentence + " " + emoji + " " + customEmoji
+        `${sentence} ${emoji} ${customEmoji}`
       );
     }
   }
 
+  // Autónomo 25%
   if (Math.random() < 0.25) {
-    const sentence = generateSentence(12);
     return message.channel.send(sentence);
   }
 });
 
-// ===== LOGIN =====
+// ====== LOGIN ======
 client.login(process.env.TOKEN);
