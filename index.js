@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
-  res.send("🔥 Patroclo B V3 está evolucionando...");
+  res.send("🔥 Patroclo B V3 está activo...");
 });
 
 app.listen(PORT, () => {
@@ -39,12 +39,10 @@ let memory = {
   mood: "neutral"
 };
 
-// Cargar memoria
 if (fs.existsSync(MEMORY_FILE)) {
   memory = JSON.parse(fs.readFileSync(MEMORY_FILE));
 }
 
-// Guardar memoria
 function saveMemory() {
   fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
 }
@@ -53,7 +51,6 @@ function saveMemory() {
 function learnFromMessage(message) {
   const text = message.content;
 
-  // Frases
   if (text.length > 5 && text.length < 200) {
     memory.learnedSentences.push(text);
     if (memory.learnedSentences.length > 500) {
@@ -61,7 +58,6 @@ function learnFromMessage(message) {
     }
   }
 
-  // Markov Orden 2
   const words = text
     .toLowerCase()
     .replace(/[^a-z0-9áéíóúñ\s]/gi, "")
@@ -79,7 +75,6 @@ function learnFromMessage(message) {
     memory.markovChain[key].push(nextWord);
   }
 
-  // Usuario
   if (!memory.userMemory[message.author.id]) {
     memory.userMemory[message.author.id] = [];
   }
@@ -89,28 +84,24 @@ function learnFromMessage(message) {
     memory.userMemory[message.author.id].shift();
   }
 
-  // Emojis Unicode
   const emojiRegex = /\p{Emoji}/gu;
   const emojis = text.match(emojiRegex);
   if (emojis) {
     emojis.forEach(e => memory.learnedEmojis.push(e));
   }
 
-  // Emojis personalizados
   const customEmojiRegex = /<a?:\w+:\d+>/g;
   const customEmojis = text.match(customEmojiRegex);
   if (customEmojis) {
     customEmojis.forEach(e => memory.learnedCustomEmojis.push(e));
   }
 
-  // Stickers
   if (message.stickers.size > 0) {
     message.stickers.forEach(sticker => {
       memory.learnedStickers.push(sticker.id);
     });
   }
 
-  // Mood dinámico
   if (text.includes("jaja") || text.includes("😂")) {
     memory.mood = "divertido";
   } else if (text.includes("enojo") || text.includes("rabia")) {
@@ -125,7 +116,7 @@ function learnFromMessage(message) {
 // ===== GENERADOR =====
 function generateSentence(maxLength = 15) {
   const keys = Object.keys(memory.markovChain);
-  if (keys.length === 0) return "Estoy absorbiendo datos...";
+  if (keys.length === 0) return "Estoy aprendiendo...";
 
   let currentKey = keys[Math.floor(Math.random() * keys.length)];
   let sentence = currentKey.split(" ");
@@ -146,7 +137,6 @@ function generateSentence(maxLength = 15) {
 
   let base = sentence.join(" ");
 
-  // Mood
   if (memory.mood === "agresivo") base += " 🔥";
   if (memory.mood === "divertido") base += " 😂";
   if (memory.mood === "oscuro") base += " 👁️";
@@ -180,29 +170,32 @@ client.on("messageCreate", async (message) => {
 
   learnFromMessage(message);
 
-  const content = message.content.toLowerCase();
+  const mentioned = message.mentions.has(client.user);
+  const replied = message.reference;
 
-  if (content === "!ping") {
-    return message.reply("Sigo evolucionando 😈");
-  }
+  const shouldRespond = mentioned || replied;
 
-  // Respuesta autónoma 25%
-  if (Math.random() < 0.25) {
+  if (shouldRespond) {
     const sentence = generateSentence(12);
     const emoji = randomEmoji();
     const customEmoji = randomCustomEmoji();
     const sticker = randomSticker();
 
     if (sticker && Math.random() < 0.3) {
-      await message.channel.send({
+      return message.channel.send({
         content: sentence + " " + emoji + " " + customEmoji,
         stickers: [sticker]
       });
     } else {
-      await message.channel.send(
+      return message.channel.send(
         sentence + " " + emoji + " " + customEmoji
       );
     }
+  }
+
+  if (Math.random() < 0.25) {
+    const sentence = generateSentence(12);
+    return message.channel.send(sentence);
   }
 });
 
