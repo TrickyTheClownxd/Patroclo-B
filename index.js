@@ -52,40 +52,18 @@ function learnFromMessage(message) {
     const word = words[i];
     const next = words[i + 1];
 
-    if (!memory[word]) {
-      memory[word] = [];
-    }
-
+    if (!memory[word]) memory[word] = [];
     memory[word].push(next);
   }
 
-  // Emojis normales
   const emojiMatches = message.content.match(/[\p{Emoji}]/gu);
-  if (emojiMatches) {
-    emojiMatches.forEach(e => {
-      if (!emojis.includes(e)) {
-        emojis.push(e);
-      }
-    });
-  }
+  if (emojiMatches) emojiMatches.forEach(e => { if (!emojis.includes(e)) emojis.push(e); });
 
-  // Emojis personalizados
   const customMatches = message.content.match(/<a?:\w+:\d+>/g);
-  if (customMatches) {
-    customMatches.forEach(e => {
-      if (!customEmojis.includes(e)) {
-        customEmojis.push(e);
-      }
-    });
-  }
+  if (customMatches) customMatches.forEach(e => { if (!customEmojis.includes(e)) customEmojis.push(e); });
 
-  // Stickers
   if (message.stickers.size > 0) {
-    message.stickers.forEach(sticker => {
-      if (!stickers.includes(sticker.id)) {
-        stickers.push(sticker.id);
-      }
-    });
+    message.stickers.forEach(s => { if (!stickers.includes(s.id)) stickers.push(s.id); });
   }
 
   saveMemory();
@@ -95,7 +73,7 @@ function learnFromMessage(message) {
 // ====== GENERAR FRASE ======
 function generateSentence(maxLength = 12) {
   const keys = Object.keys(memory);
-  if (keys.length === 0) return "no sé qué decir todavía";
+  if (keys.length === 0) return "estoy aprendiendo todavía";
 
   let word = keys[Math.floor(Math.random() * keys.length)];
   let sentence = [word];
@@ -127,7 +105,33 @@ function randomSticker() {
   return stickers[Math.floor(Math.random() * stickers.length)];
 }
 
-// ====== EVENTO MENSAJES (ARREGLADO) ======
+// ====== READY ======
+client.once("ready", () => {
+  console.log(`🔥 Patroclo B online como ${client.user.tag}`);
+
+  // Mensajes automáticos cada 1-2 minutos
+  setInterval(async () => {
+    const channels = client.channels.cache.filter(c => c.isTextBased());
+    const randomChannel = channels.random();
+    if (!randomChannel) return;
+
+    const sentence = generateSentence(12);
+    const emoji = randomEmoji();
+    const customEmoji = randomCustomEmoji();
+    const sticker = randomSticker();
+
+    if (sticker && Math.random() < 0.3) {
+      await randomChannel.send({
+        content: `${sentence} ${emoji} ${customEmoji}`,
+        stickers: [sticker]
+      });
+    } else {
+      await randomChannel.send(`${sentence} ${emoji} ${customEmoji}`);
+    }
+  }, 60000 + Math.random() * 60000); // 1-2 min
+});
+
+// ====== MENSAJES ======
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
@@ -136,19 +140,11 @@ client.on("messageCreate", async (message) => {
   const mentioned = message.mentions.has(client.user);
 
   let repliedToBot = false;
-
   if (message.reference) {
     try {
-      const repliedMessage = await message.channel.messages.fetch(
-        message.reference.messageId
-      );
-
-      if (repliedMessage.author.id === client.user.id) {
-        repliedToBot = true;
-      }
-    } catch (err) {
-      console.log("No se pudo verificar reply");
-    }
+      const repliedMessage = await message.channel.messages.fetch(message.reference.messageId);
+      if (repliedMessage.author.id === client.user.id) repliedToBot = true;
+    } catch {}
   }
 
   const shouldRespond = mentioned || repliedToBot;
@@ -158,7 +154,6 @@ client.on("messageCreate", async (message) => {
   const customEmoji = randomCustomEmoji();
   const sticker = randomSticker();
 
-  // Si lo mencionan o responden → responde SIEMPRE
   if (shouldRespond) {
     if (sticker && Math.random() < 0.3) {
       return message.channel.send({
@@ -166,16 +161,12 @@ client.on("messageCreate", async (message) => {
         stickers: [sticker]
       });
     } else {
-      return message.channel.send(
-        `${sentence} ${emoji} ${customEmoji}`
-      );
+      return message.channel.send(`${sentence} ${emoji} ${customEmoji}`);
     }
   }
 
-  // Autónomo 25%
-  if (Math.random() < 0.25) {
-    return message.channel.send(sentence);
-  }
+  // Respuestas autónomas 25%
+  if (Math.random() < 0.25) return message.channel.send(sentence);
 });
 
 // ====== LOGIN ======
