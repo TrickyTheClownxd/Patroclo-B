@@ -1,22 +1,23 @@
 import { Client, GatewayIntentBits } from "discord.js";
 import express from "express";
 import dotenv from "dotenv";
+import fs from "fs";
 
 dotenv.config();
 
-// ===== SERVIDOR EXPRESS PARA RAILWAY =====
+// ===== EXPRESS =====
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
-  res.send("🔥 Patroclo B está vivo 24/7");
+  res.send("🔥 Patroclo B V3 está evolucionando...");
 });
 
 app.listen(PORT, () => {
   console.log(`Servidor Express activo en puerto ${PORT}`);
 });
 
-// ===== CLIENTE DISCORD =====
+// ===== DISCORD =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -26,125 +27,182 @@ const client = new Client({
 });
 
 // ===== MEMORIA =====
-let wordMemory = {};
-let lastChannel = null;
-let recentTopics = [];
+const MEMORY_FILE = "./memory.json";
 
-function learnWords(text) {
-  const words = text.toLowerCase().split(/\s+/);
+let memory = {
+  markovChain: {},
+  learnedSentences: [],
+  learnedEmojis: [],
+  learnedCustomEmojis: [],
+  learnedStickers: [],
+  userMemory: {},
+  mood: "neutral"
+};
 
-  words.forEach(w => {
-    const clean = w.replace(/[^a-z0-9áéíóúñ]/gi, "");
-    if (clean.length > 3) {
-      wordMemory[clean] = (wordMemory[clean] || 0) + 1;
+// Cargar memoria
+if (fs.existsSync(MEMORY_FILE)) {
+  memory = JSON.parse(fs.readFileSync(MEMORY_FILE));
+}
 
-      if (!recentTopics.includes(clean)) {
-        recentTopics.push(clean);
-        if (recentTopics.length > 10) {
-          recentTopics.shift();
-        }
-      }
+// Guardar memoria
+function saveMemory() {
+  fs.writeFileSync(MEMORY_FILE, JSON.stringify(memory, null, 2));
+}
+
+// ===== APRENDER =====
+function learnFromMessage(message) {
+  const text = message.content;
+
+  // Frases
+  if (text.length > 5 && text.length < 200) {
+    memory.learnedSentences.push(text);
+    if (memory.learnedSentences.length > 500) {
+      memory.learnedSentences.shift();
     }
-  });
-}
-
-function randomWords(count = 2) {
-  const keys = Object.keys(wordMemory);
-  if (keys.length === 0) return ["nada interesante"];
-
-  let selected = [];
-  for (let i = 0; i < count; i++) {
-    selected.push(keys[Math.floor(Math.random() * keys.length)]);
   }
-  return selected;
+
+  // Markov Orden 2
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9áéíóúñ\s]/gi, "")
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+
+  for (let i = 0; i < words.length - 2; i++) {
+    const key = words[i] + " " + words[i + 1];
+    const nextWord = words[i + 2];
+
+    if (!memory.markovChain[key]) {
+      memory.markovChain[key] = [];
+    }
+
+    memory.markovChain[key].push(nextWord);
+  }
+
+  // Usuario
+  if (!memory.userMemory[message.author.id]) {
+    memory.userMemory[message.author.id] = [];
+  }
+
+  memory.userMemory[message.author.id].push(text);
+  if (memory.userMemory[message.author.id].length > 50) {
+    memory.userMemory[message.author.id].shift();
+  }
+
+  // Emojis Unicode
+  const emojiRegex = /\p{Emoji}/gu;
+  const emojis = text.match(emojiRegex);
+  if (emojis) {
+    emojis.forEach(e => memory.learnedEmojis.push(e));
+  }
+
+  // Emojis personalizados
+  const customEmojiRegex = /<a?:\w+:\d+>/g;
+  const customEmojis = text.match(customEmojiRegex);
+  if (customEmojis) {
+    customEmojis.forEach(e => memory.learnedCustomEmojis.push(e));
+  }
+
+  // Stickers
+  if (message.stickers.size > 0) {
+    message.stickers.forEach(sticker => {
+      memory.learnedStickers.push(sticker.id);
+    });
+  }
+
+  // Mood dinámico
+  if (text.includes("jaja") || text.includes("😂")) {
+    memory.mood = "divertido";
+  } else if (text.includes("enojo") || text.includes("rabia")) {
+    memory.mood = "agresivo";
+  } else if (text.includes("triste")) {
+    memory.mood = "oscuro";
+  }
+
+  saveMemory();
 }
 
-function generateThought() {
-  const words = randomWords(2);
+// ===== GENERADOR =====
+function generateSentence(maxLength = 15) {
+  const keys = Object.keys(memory.markovChain);
+  if (keys.length === 0) return "Estoy absorbiendo datos...";
 
-  const templates = [
-    `Estoy analizando ${words[0]} y ${words[1]}… esto se está poniendo interesante 😈`,
-    `No puedo dejar de pensar en ${words[0]}… ustedes son raros 🔥`,
-    `Si mezclamos ${words[0]} con ${words[1]}… algo grande puede pasar 👀`,
-    `Últimamente hablan mucho de ${words[0]}… sospechoso 🤔`
-  ];
+  let currentKey = keys[Math.floor(Math.random() * keys.length)];
+  let sentence = currentKey.split(" ");
 
-  return templates[Math.floor(Math.random() * templates.length)];
+  for (let i = 0; i < maxLength; i++) {
+    const nextWords = memory.markovChain[currentKey];
+    if (!nextWords || nextWords.length === 0) break;
+
+    const nextWord =
+      nextWords[Math.floor(Math.random() * nextWords.length)];
+
+    sentence.push(nextWord);
+
+    currentKey =
+      sentence[sentence.length - 2] + " " +
+      sentence[sentence.length - 1];
+  }
+
+  let base = sentence.join(" ");
+
+  // Mood
+  if (memory.mood === "agresivo") base += " 🔥";
+  if (memory.mood === "divertido") base += " 😂";
+  if (memory.mood === "oscuro") base += " 👁️";
+
+  return base;
 }
 
-function detectEmotion(text) {
-  if (text.includes("jaja") || text.includes("xd")) return "gracioso";
-  if (text.includes("triste") || text.includes("mal")) return "triste";
-  if (text.includes("enojo") || text.includes("rabia")) return "enojado";
-  return null;
+function randomEmoji() {
+  if (memory.learnedEmojis.length === 0) return "";
+  return memory.learnedEmojis[Math.floor(Math.random() * memory.learnedEmojis.length)];
+}
+
+function randomCustomEmoji() {
+  if (memory.learnedCustomEmojis.length === 0) return "";
+  return memory.learnedCustomEmojis[Math.floor(Math.random() * memory.learnedCustomEmojis.length)];
+}
+
+function randomSticker() {
+  if (memory.learnedStickers.length === 0) return null;
+  return memory.learnedStickers[Math.floor(Math.random() * memory.learnedStickers.length)];
 }
 
 // ===== READY =====
-client.once("ready", () => {
-  console.log(`🔥 Patroclo B evolucionado está online como ${client.user.tag}`);
-
-  setInterval(async () => {
-    if (!lastChannel) return;
-
-    const sentence = generateThought();
-
-    try {
-      await lastChannel.send(sentence);
-    } catch (err) {
-      console.log("Error enviando mensaje automático");
-    }
-
-  }, 60000 + Math.random() * 60000);
+client.once("clientReady", () => {
+  console.log(`🔥 Patroclo B V3 online como ${client.user.tag}`);
 });
 
 // ===== MENSAJES =====
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  lastChannel = message.channel;
-  learnWords(message.content);
+  learnFromMessage(message);
 
   const content = message.content.toLowerCase();
 
-  // Saludo
-  if (content === "hola") {
-    return message.reply("Hola tontorrón… sigo observando 😎");
-  }
-
-  // Ping
   if (content === "!ping") {
-    return message.reply("Activo. Evolucionando. 😈🔥");
+    return message.reply("Sigo evolucionando 😈");
   }
 
-  // Preguntas
-  if (content.endsWith("?")) {
-    const words = randomWords(1);
-    return message.reply(`Buena pregunta… todo gira alrededor de ${words[0]} 👀`);
-  }
+  // Respuesta autónoma 25%
+  if (Math.random() < 0.25) {
+    const sentence = generateSentence(12);
+    const emoji = randomEmoji();
+    const customEmoji = randomCustomEmoji();
+    const sticker = randomSticker();
 
-  // Emociones
-  const emotion = detectEmotion(content);
-
-  if (emotion === "gracioso") {
-    return message.reply("Te estás riendo mucho… sospechoso 😈");
-  }
-
-  if (emotion === "triste") {
-    return message.reply("Hmm… energía baja detectada ⚠️");
-  }
-
-  if (emotion === "enojado") {
-    return message.reply("Cálmate… el caos no ayuda 🔥");
-  }
-
-  // Mención
-  if (message.mentions.has(client.user)) {
-    return message.channel.send("Estoy aquí… siempre estoy aquí 😈");
-  }
-
-  // Nombre
-  if (content.includes("patroclo")) {
-    return message.channel.send("Patroclo está evolucionando… y ustedes no están listos 🔥");
+    if (sticker && Math.random() < 0.3) {
+      await message.channel.send({
+        content: sentence + " " + emoji + " " + customEmoji,
+        stickers: [sticker]
+      });
+    } else {
+      await message.channel.send(
+        sentence + " " + emoji + " " + customEmoji
+      );
+    }
   }
 });
 
