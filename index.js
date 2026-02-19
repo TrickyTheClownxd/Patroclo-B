@@ -4,11 +4,15 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const fs = require('fs');
 const express = require('express');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-const app = express();
+// ======= CLIENTE DISCORD =======
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+});
 
 // ======= EXPRESS ENDPOINT PARA PINGS =======
+const app = express();
 const PORT = process.env.PORT || 10000;
+
 app.get("/", (req, res) => res.send("🔥 Patroclo está vivo 24/7 🔥"));
 app.listen(PORT, () => console.log(`Express corriendo en puerto ${PORT}`));
 
@@ -16,27 +20,24 @@ app.listen(PORT, () => console.log(`Express corriendo en puerto ${PORT}`));
 let memory = { words: {}, phrases: [], emojis: [] };
 let extras = { spaceData: [] };
 
-if (fs.existsSync('memory.json')) memory = JSON.parse(fs.readFileSync('memory.json'));
-if (fs.existsSync('extras.json')) extras = JSON.parse(fs.readFileSync('extras.json'));
+if (fs.existsSync('memory.json')) memory = require('./memory.json');
+if (fs.existsSync('extras.json')) extras = require('./extras.json');
 
 // ======= FUNCIONES DE PATROCLO =======
-
-// Guardar memoria periódicamente
 function saveMemory() {
   fs.writeFileSync('memory.json', JSON.stringify(memory, null, 2));
   fs.writeFileSync('extras.json', JSON.stringify(extras, null, 2));
 }
 
-// Generar frase aleatoria usando Markov / palabras aprendidas
 function generatePhrase() {
   if (memory.phrases.length === 0) return "Patroclo no tiene nada que decir 😅";
   const idx = Math.floor(Math.random() * memory.phrases.length);
   return memory.phrases[idx];
 }
 
-// Generar dato del espacio aleatorio
 function getSpaceFact() {
-  if (!extras.spaceData || extras.spaceData.length === 0) return "No hay datos disponibles.";
+  if (!extras.spaceData || extras.spaceData.length === 0)
+    return "No hay datos disponibles.";
   const idx = Math.floor(Math.random() * extras.spaceData.length);
   return extras.spaceData[idx];
 }
@@ -45,15 +46,14 @@ function getSpaceFact() {
 let autoTalking = true;
 setInterval(() => {
   if (!autoTalking) return;
-  const guilds = client.guilds.cache;
-  guilds.forEach(guild => {
+  client.guilds.cache.forEach(guild => {
     const channel = guild.channels.cache.find(ch => ch.isTextBased());
     if (channel) channel.send(generatePhrase());
   });
 }, 1000 * 60 * 2); // cada 2 minutos
 
-// ======= COMANDOS =======
-client.on('messageCreate', async message => {
+// ======= COMANDOS Y APRENDIZAJE =======
+client.on('messageCreate', message => {
   if (message.author.bot) return;
 
   // ======= RESPONDER MENCIÓN =======
@@ -100,7 +100,7 @@ client.on('messageCreate', async message => {
 
 // ======= EVENTO READY =======
 client.on('clientReady', () => {
-  console.log(`${client.user.tag} está online como Patroclo🔥`);
+  console.log(`${client.user.tag} está online como Patroclo 🔥`);
 });
 
 // ======= LOGIN =======
