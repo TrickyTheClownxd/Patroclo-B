@@ -1,7 +1,7 @@
-// index.js
-require('dotenv').config();
+require('dotenv').config(); // Para que funcione si se corre local
 const { Client, GatewayIntentBits } = require('discord.js');
 const fs = require('fs');
+const path = require('path');
 const express = require('express');
 
 // ======= CLIENTE DISCORD =======
@@ -9,24 +9,30 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
-// ======= EXPRESS ENDPOINT PARA PINGS =======
+// ======= EXPRESS PARA PINGS =======
 const app = express();
 const PORT = process.env.PORT || 10000;
-
-app.get("/", (req, res) => res.send("🔥 Patroclo está vivo 24/7 🔥"));
+app.get("/", (req, res) => res.send("🔥 Patroclo activo 🔥"));
 app.listen(PORT, () => console.log(`Express corriendo en puerto ${PORT}`));
 
 // ======= CARGA DE MEMORIA Y EXTRAS =======
 let memory = { words: {}, phrases: [], emojis: [] };
 let extras = { spaceData: [] };
+let universe = { facts: [], usedToday: [] };
 
-if (fs.existsSync('memory.json')) memory = require('./memory.json');
-if (fs.existsSync('extras.json')) extras = require('./extras.json');
+const memoryFile = path.join(__dirname, 'memory.json');
+const extrasFile = path.join(__dirname, 'extras.json');
+const universeFile = path.join(__dirname, 'universe.json');
 
-// ======= FUNCIONES DE PATROCLO =======
-function saveMemory() {
-  fs.writeFileSync('memory.json', JSON.stringify(memory, null, 2));
-  fs.writeFileSync('extras.json', JSON.stringify(extras, null, 2));
+if (fs.existsSync(memoryFile)) memory = require(memoryFile);
+if (fs.existsSync(extrasFile)) extras = require(extrasFile);
+if (fs.existsSync(universeFile)) universe = require(universeFile);
+
+// ======= FUNCIONES =======
+function saveAll() {
+  fs.writeFileSync(memoryFile, JSON.stringify(memory, null, 2));
+  fs.writeFileSync(extrasFile, JSON.stringify(extras, null, 2));
+  fs.writeFileSync(universeFile, JSON.stringify(universe, null, 2));
 }
 
 function generatePhrase() {
@@ -36,13 +42,25 @@ function generatePhrase() {
 }
 
 function getSpaceFact() {
-  if (!extras.spaceData || extras.spaceData.length === 0)
-    return "No hay datos disponibles.";
-  const idx = Math.floor(Math.random() * extras.spaceData.length);
-  return extras.spaceData[idx];
+  const available = universe.facts.filter(f => !universe.usedToday.includes(f));
+  if (available.length === 0) {
+    const bonus = "🌠 Bonus: La Nebulosa de la Tarántula está en la Gran Nube de Magallanes y es una de las más activas en formación estelar.";
+    return bonus;
+  }
+  const idx = Math.floor(Math.random() * available.length);
+  const fact = available[idx];
+  universe.usedToday.push(fact);
+
+  if (available.length === 1 && extras.spaceData.length > 0) {
+    const newFact = extras.spaceData.shift();
+    universe.facts.push(newFact);
+  }
+
+  saveAll();
+  return fact;
 }
 
-// ======= AUTOMESSAGES =======
+// ======= AUTO MESSAGES =======
 let autoTalking = true;
 setInterval(() => {
   if (!autoTalking) return;
@@ -50,29 +68,27 @@ setInterval(() => {
     const channel = guild.channels.cache.find(ch => ch.isTextBased());
     if (channel) channel.send(generatePhrase());
   });
-}, 1000 * 60 * 2); // cada 2 minutos
+}, 1000 * 60 * 2);
 
-// ======= COMANDOS Y APRENDIZAJE =======
+// ======= EVENTO MESSAGE =======
 client.on('messageCreate', message => {
   if (message.author.bot) return;
 
-  // ======= RESPONDER MENCIÓN =======
   if (message.mentions.has(client.user)) {
     message.reply(generatePhrase());
   }
 
-  // ======= COMANDOS =======
   const args = message.content.trim().split(/ +/g);
   const command = args.shift().toLowerCase();
 
   if (command === '!pausar') {
     autoTalking = false;
-    message.channel.send("Patroclo ha pausado los mensajes automáticos 😴");
+    message.channel.send("Patroclo pausó los mensajes automáticos 😴");
   }
 
   if (command === '!reanudar') {
     autoTalking = true;
-    message.channel.send("Patroclo ha reanudado los mensajes automáticos 🔥");
+    message.channel.send("Patroclo reanudó los mensajes automáticos 🔥");
   }
 
   if (command === '!frase') {
@@ -83,25 +99,9 @@ client.on('messageCreate', message => {
     message.channel.send(getSpaceFact());
   }
 
-  // ======= APRENDIZAJE =======
+  // ===== APRENDIZAJE =====
   const words = message.content.split(' ');
-  words.forEach(word => {
-    memory.words[word] = (memory.words[word] || 0) + 1;
-  });
+  words.forEach(word => memory.words[word] = (memory.words[word] || 0) + 1);
   memory.phrases.push(message.content);
 
-  // Guardar emojis usados
-  message.emojis.cache.forEach(emoji => {
-    if (!memory.emojis.includes(emoji.name)) memory.emojis.push(emoji.name);
-  });
-
-  saveMemory();
-});
-
-// ======= EVENTO READY =======
-client.on('clientReady', () => {
-  console.log(`${client.user.tag} está online como Patroclo 🔥`);
-});
-
-// ======= LOGIN =======
-client.login(process.env.TOKEN);
+  if
