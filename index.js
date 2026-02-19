@@ -1,7 +1,15 @@
 import fs from 'fs';
-import { Client, GatewayIntentBits } from 'discord.js';
+import http from 'http';
+import { Client, GatewayIntentBits, ChannelType } from 'discord.js';
 import dotenv from 'dotenv';
-dotenv.config();
+
+try { dotenv.config(); } catch (e) { console.log("Variables desde el sistema."); }
+
+// Servidor para evitar el apagado en Render/Railway
+http.createServer((req, res) => {
+  res.write("Patroclo-B Online");
+  res.end();
+}).listen(process.env.PORT || 8080);
 
 const client = new Client({
   intents: [
@@ -11,45 +19,76 @@ const client = new Client({
   ]
 });
 
-// Archivos JSON
-const MEMORY_FILE = './memory.json';
-const EXTRAS_FILE = './extras.json';
-const UNIVERSE_FILE = './universe.json';
+const FILES = {
+  memory: './memory.json',
+  extras: './extras.json',
+  universe: './universe.json'
+};
 
-// Función para validar y crear JSON base
 function validateJSON(filePath, defaultData) {
   try {
     if (!fs.existsSync(filePath)) {
-      console.log(`[INFO] ${filePath} no existe. Creando archivo con datos base.`);
       fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2));
       return defaultData;
     }
     const raw = fs.readFileSync(filePath, 'utf8');
-    if (!raw.trim()) throw new Error('Archivo vacío');
-    return JSON.parse(raw);
+    return raw.trim() ? JSON.parse(raw) : defaultData;
   } catch (error) {
-    console.log(`[WARN] ${filePath} corrupto o inválido. Reemplazando con base segura.`);
-    fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2));
     return defaultData;
   }
 }
 
-// Datos base seguros
-const baseMemory = { words: {}, phrases: [], emojis: [] };
-const baseExtras = { emojis: [], customEmojis: [], stickers: [], spaceData: [] };
-const baseUniverse = { facts: [], usedToday: [] };
+let memory = validateJSON(FILES.memory, { words: {}, phrases: [], emojis: [] });
+let extras = validateJSON(FILES.extras, { emojis: [], customEmojis: [], stickers: [], spaceData: [] });
+let universe = validateJSON(FILES.universe, { facts: [], usedToday: [] });
 
-// Cargar archivos con validación
-const memory = validateJSON(MEMORY_FILE, baseMemory);
-const extras = validateJSON(EXTRAS_FILE, baseExtras);
-const universe = validateJSON(UNIVERSE_FILE, baseUniverse);
+const saveFile = (path, data) => fs.writeFileSync(path, JSON.stringify(data, null, 2));
 
-// Evento ready
-client.on('ready', () => {
-  console.log(`Bot listo! Memory: ${Object.keys(memory.words).length} palabras, Extras: ${extras.spaceData.length} datos, Universe: ${universe.facts.length} hechos.`);
+// --- LISTA DE EMOJIS PARA EL SALUDO ---
+const randomEmojis = ['🔥', '😎', '🤙', '👺', '🛰️', '🌌', '😈', '🚀', '💎'];
+
+client.on('ready', async () => {
+  console.log(`✅ Conectado como: ${client.user.tag}`);
+
+  // SALUDO DE ENTRADA
+  const emoji = randomEmojis[Math.floor(Math.random() * randomEmojis.length)];
+  const saludo = `Que onda perritas, ya llegué ${emoji}`;
+
+  // Busca el primer canal donde pueda escribir para avisar que llegó
+  client.guilds.cache.forEach(async (guild) => {
+    const channel = guild.channels.cache.find(ch => ch.type === ChannelType.GuildText && ch.permissionsFor(client.user).has('SendMessages'));
+    if (channel) {
+      channel.send(saludo).catch(err => console.log("No pude saludar en un canal."));
+    }
+  });
 });
 
-// Aquí van tus comandos, Markov, universe, etc.
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
 
-// Token desde variable de Railways
-client.login(process.env.BOT_TOKEN);
+  const content = message.content.toLowerCase();
+
+  // APRENDIZAJE: Guarda todo lo que digan los usuarios
+  if (content.length > 2 && !content.startsWith('!')) {
+    if (!memory.phrases.includes(message.content)) {
+      memory.phrases.push(message.content);
+      const words = content.split(/\s+/);
+      words.forEach(w => memory.words[w] = (memory.words[w] || 0) + 1);
+      saveFile(FILES.memory, memory);
+    }
+  }
+
+  // COMANDO: !universo
+  if (content.includes('!universo')) {
+    const fact = universe.facts[Math.floor(Math.random() * universe.facts.length)];
+    return message.reply(fact || "El espacio es gigante, pa.");
+  }
+
+  // RESPUESTA ALEATORIA
+  if (Math.random() < 0.15 && memory.phrases.length > 0) {
+    const response = memory.phrases[Math.floor(Math.random() * memory.phrases.length)];
+    return message.channel.send(response);
+  }
+});
+
+client.login(process.env.BOT_TOKEN || process.env.TOKEN);
