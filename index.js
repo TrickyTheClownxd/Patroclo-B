@@ -6,78 +6,104 @@ import mongoose from 'mongoose';
 
 try { dotenv.config(); } catch (e) {}
 
+// --- ESQUEMA ---
 const MemoryModel = mongoose.model('Memory', new mongoose.Schema({
   id: { type: String, default: "global_memory" },
   phrases: [String]
 }));
 
+// --- VARIABLES Y CARGA DE ARCHIVOS ---
 let isPaused = false;
-const FILES = { memory: './memory.json', universe: './universe.json' };
-const loadJSON = (path, def) => { try { return JSON.parse(fs.readFileSync(path, 'utf8')); } catch { return def; } };
+const FILES = { 
+  memory: './memory.json', 
+  universe: './universe.json' 
+};
+
+const loadJSON = (path, def) => { 
+  try { return JSON.parse(fs.readFileSync(path, 'utf8')); } 
+  catch { return def; } 
+};
 
 let memory = loadJSON(FILES.memory, { phrases: [] });
-let universeFacts = loadJSON(FILES.universe, ["El cosmos espera."]);
+let universeFacts = loadJSON(FILES.universe, ["El cosmos está en silencio."]);
 
-http.createServer((req, res) => { res.write("Patroclo-B V23.0"); res.end(); }).listen(process.env.PORT || 8080);
+// --- SERVIDOR PARA RAILWAY ---
+http.createServer((req, res) => { 
+  res.write("Patroclo-B V24.0 - Running"); 
+  res.end(); 
+}).listen(process.env.PORT || 8080);
 
 const client = new Client({ 
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] 
+  intents: [
+    GatewayIntentBits.Guilds, 
+    GatewayIntentBits.GuildMessages, 
+    GatewayIntentBits.MessageContent
+  ] 
 });
 
+// --- FUNCIÓN DE CONEXIÓN (CON PACIENCIA) ---
 const connectDB = async () => {
   const uri = process.env.MONGO_URI;
-  if (!uri) return console.log("⚠️ No detecto la variable MONGO_URI en Railway.");
-  
-  // Log para ver qué está leyendo (solo los primeros caracteres por seguridad)
-  console.log(`⏳ Intentando conectar a: ${uri.substring(0, 20)}...`);
+  if (!uri) return console.log("⚠️ No hay MONGO_URI en las variables.");
 
+  console.log("⏳ Intentando entrar a Atlas...");
   try {
-    // Quitamos configuraciones raras, que Mongoose decida
-    await mongoose.connect(uri);
-    console.log("🌐 ¡CONECTADO A MONGODB ATLAS!");
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 15000,
+      connectTimeoutMS: 15000,
+    });
     
+    console.log("🌐 ¡CONECTADO A LA NUBE!");
+    
+    // Sincronizar memoria al conectar
     const data = await MemoryModel.findOne({ id: "global_memory" });
     if (data) {
       memory.phrases = [...new Set([...memory.phrases, ...data.phrases])];
       fs.writeFileSync(FILES.memory, JSON.stringify(memory, null, 2));
     }
   } catch (err) {
-    console.log("❌ Error de conexión: ", err.message);
-    setTimeout(connectDB, 10000);
+    console.log("❌ Atlas sigue rechazando. Reintentando en 15s...");
+    setTimeout(connectDB, 15000);
   }
 };
 
 client.on('ready', () => {
-  console.log(`✅ Patroclo-B ready.`);
+  console.log(`✅ Patroclo-B activo: ${client.user.tag}`);
   connectDB();
 });
 
+// --- LÓGICA DE COMANDOS ---
 client.on('messageCreate', async (msg) => {
   if (msg.author.id === client.user.id) return;
   const input = msg.content.toLowerCase();
 
-  if (input === '!reanudar') { isPaused = false; return msg.reply("🚀 On."); }
+  if (input === '!reanudar') { isPaused = false; return msg.reply("🚀 Sistemas ONLINE."); }
   if (isPaused) return;
-  if (input === '!pausa') { isPaused = true; return msg.reply("💤 Off."); }
+  if (input === '!pausa') { isPaused = true; return msg.reply("💤 Modo siesta activado."); }
 
+  // Reacción a Bots
+  if (msg.author.bot) {
+    if (input.includes("ganaste") || input.includes("monedas")) return msg.channel.send("Tirá unos mangos para los pibes.");
+    return;
+  }
+
+  // Comandos
   if (input.startsWith('!')) {
     const args = input.slice(1).split(/\s+/);
     const cmd = args.shift();
 
-    if (cmd === 'ayuda') return msg.reply("📜 Comandos: `!suerte`, `!bola8`, `!nekoask`, `!confesion`, `!spoty`, `!bardo`, `!universefacts`, `!stats`, `!reloadjson`.");
+    if (cmd === 'ayuda') return msg.reply("📜 `!suerte`, `!bola8`, `!nekoask`, `!confesion`, `!spoty`, `!bardo`, `!universefacts`, `!stats`, `!reloadjson`.");
     
-    if (cmd === 'universefacts') return msg.reply(`🌌 ${universeFacts[Math.floor(Math.random() * universeFacts.length)]}`);
-    
-    if (cmd === 'reloadjson') {
-      universeFacts = loadJSON(FILES.universe, ["Reset."]);
-      return msg.reply("📂 Universe actualizado.");
+    if (cmd === 'universefacts') {
+      const f = universeFacts[Math.floor(Math.random() * universeFacts.length)];
+      return msg.reply(`🌌 **Dato:** ${f}`);
     }
 
     if (cmd === 'nekoask') {
       const q = args.join(" ");
-      if (!q) return msg.reply("¿?");
+      if (!q) return msg.reply("¡Mandale una pregunta!");
       msg.channel.send(`!nekoask ${q}`);
-      return msg.channel.send(`> **Pregunta a Nekotina:** ${q}`);
+      return msg.channel.send(`> **Consultando a la gata:** ${q}`);
     }
 
     if (cmd === 'confesion') {
@@ -85,20 +111,26 @@ client.on('messageCreate', async (msg) => {
       if (texto) {
         memory.phrases.push(`[CONFESIÓN]: ${texto}`);
         try { await msg.delete(); } catch(e){}
-        return msg.channel.send("🤫 Guardado.");
+        return msg.channel.send("🤫 Tu secreto murió acá.");
       } else {
         const c = memory.phrases.filter(p => p.includes("[CONFESIÓN]"));
         const p = (c.length > 0 ? c : memory.phrases)[Math.floor(Math.random() * (c.length || memory.phrases.length))];
-        return msg.reply(`🤫 **CONFESIÓN:** ${p.replace("[CONFESIÓN]: ", "")}`);
+        return msg.reply(`🤫 **Confesión:** ${p.replace("[CONFESIÓN]: ", "")}`);
       }
     }
 
     if (cmd === 'stats') {
-      const db = mongoose.connection.readyState === 1 ? "☁️ Conectado" : "❌ Desconectado";
-      return msg.reply(`📊 Memoria: ${memory.phrases.length} | DB: ${db}`);
+      const dbStatus = mongoose.connection.readyState === 1 ? "☁️ Conectado" : "❌ Desconectado";
+      return msg.reply(`📊 Memoria: ${memory.phrases.length} frases | DB: ${dbStatus}`);
+    }
+
+    if (cmd === 'reloadjson') {
+      universeFacts = loadJSON(FILES.universe, ["Reset."]);
+      return msg.reply("📂 Universe.json actualizado.");
     }
   }
 
+  // Aprendizaje Pasivo
   if (input.length > 3 && !input.startsWith('!')) {
     if (!memory.phrases.includes(msg.content)) {
       memory.phrases.push(msg.content);
