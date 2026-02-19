@@ -6,34 +6,35 @@ import mongoose from 'mongoose';
 
 try { dotenv.config(); } catch (e) {}
 
-// --- ESQUEMA ---
 const MemoryModel = mongoose.model('Memory', new mongoose.Schema({
   id: { type: String, default: "global_memory" },
   phrases: [String]
 }));
 
-// --- VARIABLES ---
 let isPaused = false;
 const FILES = { memory: './memory.json', universe: './universe.json' };
 const loadJSON = (path, def) => { try { return JSON.parse(fs.readFileSync(path, 'utf8')); } catch { return def; } };
 
 let memory = loadJSON(FILES.memory, { phrases: [] });
-let universeFacts = loadJSON(FILES.universe, ["El espacio es infinito."]);
+let universeFacts = loadJSON(FILES.universe, ["El cosmos espera."]);
 
-// --- SERVIDOR ---
-http.createServer((req, res) => { res.write("Patroclo-B V22.0"); res.end(); }).listen(process.env.PORT || 8080);
+http.createServer((req, res) => { res.write("Patroclo-B V23.0"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({ 
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] 
 });
 
-// --- CONEXIÓN ESTILO "OLD SCHOOL" ---
 const connectDB = async () => {
-  if (!process.env.MONGO_URI) return console.log("⚠️ Sin URI.");
+  const uri = process.env.MONGO_URI;
+  if (!uri) return console.log("⚠️ No detecto la variable MONGO_URI en Railway.");
+  
+  // Log para ver qué está leyendo (solo los primeros caracteres por seguridad)
+  console.log(`⏳ Intentando conectar a: ${uri.substring(0, 20)}...`);
+
   try {
-    // Para el downgrade, usamos una configuración más simple
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("🌐 ¡CONECTADO CON URI ESTÁNDAR!");
+    // Quitamos configuraciones raras, que Mongoose decida
+    await mongoose.connect(uri);
+    console.log("🌐 ¡CONECTADO A MONGODB ATLAS!");
     
     const data = await MemoryModel.findOne({ id: "global_memory" });
     if (data) {
@@ -41,13 +42,13 @@ const connectDB = async () => {
       fs.writeFileSync(FILES.memory, JSON.stringify(memory, null, 2));
     }
   } catch (err) {
-    console.log("❌ Error de conexión. Reintentando...");
-    setTimeout(connectDB, 8000);
+    console.log("❌ Error de conexión: ", err.message);
+    setTimeout(connectDB, 10000);
   }
 };
 
 client.on('ready', () => {
-  console.log(`✅ Patroclo-B online.`);
+  console.log(`✅ Patroclo-B ready.`);
   connectDB();
 });
 
@@ -59,24 +60,17 @@ client.on('messageCreate', async (msg) => {
   if (isPaused) return;
   if (input === '!pausa') { isPaused = true; return msg.reply("💤 Off."); }
 
-  // Reacción a bots
-  if (msg.author.bot) {
-    if (input.includes("ganaste") || input.includes("monedas")) return msg.channel.send("Tirá algo, millonario.");
-    return;
-  }
-
-  // Comandos
   if (input.startsWith('!')) {
     const args = input.slice(1).split(/\s+/);
     const cmd = args.shift();
 
-    if (cmd === 'ayuda') return msg.reply("📜 `!suerte`, `!bola8`, `!nekoask`, `!confesion`, `!spoty`, `!bardo`, `!universefacts`, `!stats`, `!reloadjson`.");
+    if (cmd === 'ayuda') return msg.reply("📜 Comandos: `!suerte`, `!bola8`, `!nekoask`, `!confesion`, `!spoty`, `!bardo`, `!universefacts`, `!stats`, `!reloadjson`.");
     
     if (cmd === 'universefacts') return msg.reply(`🌌 ${universeFacts[Math.floor(Math.random() * universeFacts.length)]}`);
     
     if (cmd === 'reloadjson') {
       universeFacts = loadJSON(FILES.universe, ["Reset."]);
-      return msg.reply("📂 Universe recargado.");
+      return msg.reply("📂 Universe actualizado.");
     }
 
     if (cmd === 'nekoask') {
@@ -100,12 +94,11 @@ client.on('messageCreate', async (msg) => {
     }
 
     if (cmd === 'stats') {
-      const db = mongoose.connection.readyState === 1 ? "☁️ OK" : "❌ OFF";
+      const db = mongoose.connection.readyState === 1 ? "☁️ Conectado" : "❌ Desconectado";
       return msg.reply(`📊 Memoria: ${memory.phrases.length} | DB: ${db}`);
     }
   }
 
-  // Aprender
   if (input.length > 3 && !input.startsWith('!')) {
     if (!memory.phrases.includes(msg.content)) {
       memory.phrases.push(msg.content);
