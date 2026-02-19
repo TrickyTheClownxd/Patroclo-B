@@ -25,7 +25,8 @@ const FILES = {
   universe: './universe.json'
 };
 
-function validateJSON(filePath, defaultData) {
+// Función de validación y carga
+function loadJSON(filePath, defaultData) {
   try {
     if (!fs.existsSync(filePath)) {
       fs.writeFileSync(filePath, JSON.stringify(defaultData, null, 2));
@@ -36,18 +37,15 @@ function validateJSON(filePath, defaultData) {
   } catch (error) { return defaultData; }
 }
 
-let memory = validateJSON(FILES.memory, { words: {}, phrases: [], emojis: [] });
-let extras = validateJSON(FILES.extras, { emojis: [], customEmojis: [], stickers: [], spaceData: [] });
-let universe = validateJSON(FILES.universe, { facts: [], usedToday: [] });
+let memory = loadJSON(FILES.memory, { words: {}, phrases: [], emojis: [] });
+let extras = loadJSON(FILES.extras, { emojis: [], customEmojis: [], stickers: [], spaceData: [] });
+let universe = loadJSON(FILES.universe, { facts: [], usedToday: [] });
 
 const saveFile = (path, data) => fs.writeFileSync(path, JSON.stringify(data, null, 2));
-const randomEmojis = ['🔥', '😎', '🤙', '👺', '🛰️', '🌌', '🚀'];
-let lastChannelId = null;
 
-// --- SALUDO AL ENTRAR ---
 client.on('ready', () => {
   console.log(`✅ Patroclo-B activo.`);
-  const salu = `Que onda perritas, ya llegué ${randomEmojis[Math.floor(Math.random() * randomEmojis.length)]}`;
+  const salu = `Que onda perritas, ya llegué 🔥`;
   client.guilds.cache.forEach(guild => {
     const ch = guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.permissionsFor(client.user).has('SendMessages'));
     if (ch) ch.send(salu).catch(() => {});
@@ -56,26 +54,68 @@ client.on('ready', () => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  lastChannelId = message.channel.id;
 
   const content = message.content.toLowerCase();
-  const isMentioned = message.mentions.has(client.user);
-  const isReplyToMe = message.reference && (await message.channel.messages.fetch(message.reference.messageId)).author.id === client.user.id;
+  
+  // --- 1. COMANDOS MANUALES (CON !) ---
+  if (content.startsWith('!')) {
+    const args = content.slice(1).split(/\s+/);
+    const command = args.shift();
 
-  // --- APRENDIZAJE ---
-  if (!content.startsWith('!')) {
-    if (message.stickers.size > 0) {
-      message.stickers.forEach(s => { if (!extras.stickers.includes(s.id)) extras.stickers.push(s.id); });
-      saveFile(FILES.extras, extras);
-    }
-    if (content.length > 2) {
-      if (!memory.phrases.includes(message.content)) {
-        memory.phrases.push(message.content);
-        content.split(/\s+/).forEach(w => {
-          const clean = w.replace(/[.,!?;:]/g, "");
-          if (clean.length > 2) memory.words[clean] = (memory.words[clean] || 0) + 1;
-        });
+    if (command === 'universo') {
+      let available = universe.facts.filter(f => !universe.usedToday.includes(f));
+      if (available.length === 0) {
+        const bonus = extras.spaceData.length > 0 ? extras.spaceData[Math.floor(Math.random() * extras.spaceData.length)] : "🌌 El universo es infinito, pero mis datos de hoy no. ¡Mañana más!";
+        return message.reply(`🌠 **Dato Extra:** ${bonus}`);
       }
+      const selected = available[Math.floor(Math.random() * available.length)];
+      universe.usedToday.push(selected);
+      saveFile(FILES.universe, universe);
+      return message.reply(`🌌 ${selected}`);
+    }
+
+    if (command === 'clearused') {
+      universe.usedToday = [];
+      saveFile(FILES.universe, universe);
+      return message.reply("🧹 Lista de hechos del día reseteada.");
+    }
+
+    if (command === 'reloadjson') {
+      memory = loadJSON(FILES.memory, memory);
+      extras = loadJSON(FILES.extras, extras);
+      universe = loadJSON(FILES.universe, universe);
+      return message.reply("🔄 Archivos JSON recargados con éxito.");
+    }
+
+    if (command === 'stats') {
+      return message.reply(`📊 **Stats:** ${memory.phrases.length} frases, ${extras.stickers.length} stickers y ${universe.facts.length} hechos espaciales.`);
+    }
+    return; // Salir si es un comando para no aprenderlo
+  }
+
+  // --- 2. TRIGGERS AUTOMÁTICOS (Palabras Clave) ---
+  const keywords = ['universo', 'espacio', 'hecho', 'tarantula', 'estrella'];
+  if (keywords.some(k => content.includes(k))) {
+    const fact = universe.facts[Math.floor(Math.random() * universe.facts.length)];
+    if (fact) return message.reply(`🔭 Ya que hablaban de eso... ${fact}`);
+  }
+
+  // --- 3. APRENDIZAJE DINÁMICO ---
+  // Guardar Stickers
+  if (message.stickers.size > 0) {
+    message.stickers.forEach(s => { if (!extras.stickers.includes(s.id)) extras.stickers.push(s.id); });
+    saveFile(FILES.extras, extras);
+  }
+
+  // Guardar Frases y Palabras
+  if (content.length > 2) {
+    if (!memory.phrases.includes(message.content)) {
+      memory.phrases.push(message.content);
+      content.split(/\s+/).forEach(w => {
+        const clean = w.replace(/[.,!?;:]/g, "");
+        if (clean.length > 2) memory.words[clean] = (memory.words[clean] || 0) + 1;
+      });
+      // Guardar Emojis
       const emojiRegex = /<a?:\w+:\d+>|[\u{1F300}-\u{1F9FF}]/gu;
       const found = message.content.match(emojiRegex);
       if (found) found.forEach(e => {
@@ -87,48 +127,13 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // --- RESPUESTA GEN-AI ---
-  if (isMentioned || isReplyToMe) {
+  // --- 4. RESPUESTA TIPO GEN-AI (Mención o Respuesta) ---
+  if (message.mentions.has(client.user) || (message.reference && (await message.channel.messages.fetch(message.reference.messageId)).author.id === client.user.id)) {
     if (memory.phrases.length > 0) {
-      return message.reply(memory.phrases[Math.floor(Math.random() * memory.phrases.length)]);
+      const resp = memory.phrases[Math.floor(Math.random() * memory.phrases.length)];
+      return message.reply(resp);
     }
-  }
-
-  // --- COMANDO !UNIVERSO (CON BONUS TARÁNTULA) ---
-  if (content.includes('!universo')) {
-    let available = universe.facts.filter(f => !universe.usedToday.includes(f));
-    if (available.length === 0) {
-        const tarantula = [
-            "🌌 **Bonus Tarántula:** Acá están las estrellas Wolf-Rayet, las más calientes y masivas del universo.",
-            "🔥 **Dato Wolf-Rayet:** Estas estrellas pierden masa tan rápido que escupen vientos a millones de km/h."
-        ];
-        const res = tarantula[Math.floor(Math.random() * tarantula.length)];
-        if (universe.usedToday.length > universe.facts.length + 1) universe.usedToday = [];
-        return message.reply(res);
-    }
-    const selected = available[Math.floor(Math.random() * available.length)];
-    universe.usedToday.push(selected);
-    saveFile(FILES.universe, universe);
-    return message.reply(selected);
-  }
-
-  // --- RANDOM (15%) ---
-  if (Math.random() < 0.15 && memory.phrases.length > 0) {
-    message.channel.send(memory.phrases[Math.floor(Math.random() * memory.phrases.length)]);
   }
 });
-
-// --- INTERVALO 5 MIN ---
-setInterval(() => {
-  if (!lastChannelId) return;
-  const channel = client.channels.cache.get(lastChannelId);
-  if (channel) {
-    if (Math.random() > 0.5 && universe.facts.length > 0) {
-      channel.send(`🔭 **Dato Espacial:** ${universe.facts[Math.floor(Math.random() * universe.facts.length)]}`).catch(() => {});
-    } else if (memory.phrases.length > 0) {
-      channel.send(memory.phrases[Math.floor(Math.random() * memory.phrases.length)]).catch(() => {});
-    }
-  }
-}, 300000);
 
 client.login(process.env.BOT_TOKEN || process.env.TOKEN);
