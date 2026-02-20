@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 
 dotenv.config();
 
-// --- MODELO MONGOOSE (Memoria en la Nube) ---
+// --- MODELO MONGOOSE (Memoria Eterna) ---
 const MemorySchema = new mongoose.Schema({
   id: { type: String, default: "global_memory" },
   phrases: [String],
@@ -17,16 +17,20 @@ const MemorySchema = new mongoose.Schema({
 });
 const MemoryModel = mongoose.model('Memory', MemorySchema);
 
-// Server para Render/Railway/Render
-http.createServer((req, res) => { res.write("Patroclo-B V32.0 Online"); res.end(); }).listen(process.env.PORT || 8080);
+// Server para Render/Railway
+http.createServer((req, res) => { res.write("Patroclo-B V33.0 Online"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 const FILES = { memory: './memory.json', extras: './extras.json', universe: './universe.json' };
 
-// Validación de JSON (Anti-error de comas)
+// Validación de JSON original (Anti-crasheo)
 function validateJSON(filePath, defaultData) {
   try {
     if (!fs.existsSync(filePath)) {
@@ -47,12 +51,12 @@ let lastMessageTime = Date.now();
 
 const saveFile = (path, data) => fs.writeFileSync(path, JSON.stringify(data, null, 2));
 
-// --- CONEXIÓN Y SINCRONIZACIÓN ---
+// --- CONEXIÓN Y SINCRONIZACIÓN CLOUD ---
 const connectDB = async () => {
-  if (!process.env.MONGO_URI) return console.log("⚠️ Falta MONGO_URI");
+  if (!process.env.MONGO_URI) return console.log("⚠️ Sin MONGO_URI configurada.");
   try {
     await mongoose.connect(process.env.MONGO_URI);
-    console.log("🌐 Conectado a MongoDB Atlas");
+    console.log("🌐 Atlas Conectado");
     const data = await MemoryModel.findOne({ id: "global_memory" });
     if (data) {
       memory.phrases = [...new Set([...memory.phrases, ...data.phrases])];
@@ -73,7 +77,7 @@ const syncCloud = async () => {
 };
 
 client.on('ready', () => {
-  console.log(`✅ Patroclo-B Online. Memoria: ${memory.phrases.length} frases.`);
+  console.log(`✅ Patroclo-B V33.0 Online.`);
   connectDB();
   client.guilds.cache.forEach(g => {
     const ch = g.channels.cache.find(c => c.type === ChannelType.GuildText && c.permissionsFor(client.user).has('SendMessages'));
@@ -87,7 +91,7 @@ client.on('messageCreate', async (message) => {
   lastMessageTime = Date.now();
   const content = message.content.toLowerCase();
 
-  // --- APRENDIZAJE (Manual de la Madrugada) ---
+  // --- APRENDIZAJE ---
   if (!content.startsWith('!') && !isPaused) {
     let changed = false;
     if (message.stickers.size > 0) {
@@ -123,26 +127,42 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(1).split(/\s+/);
     const cmd = args.shift().toLowerCase();
 
+    // 1. AYUDA
     if (cmd === 'ayuda' || cmd === 'help') {
-      return message.channel.send("📜 **COMANDOS DE PATROCLO:**\n`!suerte`, `!bola8`, `!nekoask [p]`, `!confesion [t]`, `!spoty`, `!bardo`, `!universefacts`, `!stats`, `!pausa`, `!reanudar`, `!reload`, `!reloadjson`, `!horoscopo`.");
+      return message.channel.send("📜 **COMANDOS:**\n`!suerte`, `!bola8`, `!nekoask [p]`, `!confesion [t]`, `!spoty`, `!bardo`, `!universefacts`, `!stats`, `!pausa`, `!reanudar`, `!reload`, `!horoscopo`.");
     }
 
+    // 2. HORÓSCOPO 50/50
     if (cmd === 'horoscopo') {
-      const signos = ["Satélite Viejo", "Nebulosa de Birra", "Asteroide con Ansiedad", "Supernova de Bardo", "Enana Blanca Resacosa", "Hoyo Negro Fiscal"];
-      const s = signos[Math.floor(Math.random() * signos.length)];
-      const p = memory.phrases[Math.floor(Math.random() * memory.phrases.length)] || "Día fantasma.";
-      return message.reply(`✨ **HORÓSCOPO DISOCIADO** ✨\n\n🪐 **Signo:** ${s}\n🔮 **Predicción:** "${p}"\n\n*El universo no miente, Tricky.*`);
+      const disoc = ["Satélite Viejo", "Nebulosa de Birra", "Asteroide con Ansiedad", "Hoyo Negro Fiscal", "Materia Oscura Resacosa"];
+      const reales = universe.facts.length > 0 ? universe.facts : ["Estrella Wolf-Rayet", "Nebulosa Tarántula"];
+      const esReal = Math.random() > 0.5;
+      const signo = esReal ? reales[Math.floor(Math.random() * reales.length)].split('.')[0] : disoc[Math.floor(Math.random() * disoc.length)];
+      const pred = memory.phrases[Math.floor(Math.random() * memory.phrases.length)] || "Día fantasma.";
+      return message.reply(`✨ **HORÓSCOPO ${esReal ? 'ASTRONÓMICO' : 'DISOCIADO'}** ✨\n\n🪐 **Signo:** ${signo}\n🔮 **Predicción:** "${pred}"\n\n*El universo no miente, Tricky.*`);
     }
 
+    // 3. SUERTE (CASINO)
+    if (cmd === 'suerte' || cmd === 'bola8') {
+      const iconos = memory.emojis.length >= 3 ? memory.emojis : ['🔥', '💎', '🍀', '👺', '💩'];
+      const s1 = iconos[Math.floor(Math.random() * iconos.length)];
+      const s2 = iconos[Math.floor(Math.random() * iconos.length)];
+      const s3 = iconos[Math.floor(Math.random() * iconos.length)];
+      let res = (s1 === s2 && s2 === s3) ? "¡JACKPOT! 🏆" : (s1 === s2 || s2 === s3 || s1 === s3) ? "¡Casi! Premio consuelo. 🍻" : "Perdiste por fantasma. 🤌";
+      const frase = memory.phrases[Math.floor(Math.random() * memory.phrases.length)] || "Mala racha.";
+      return message.reply(`🎰 **PATROCLO CASINO** 🎰\n[ ${s1} | ${s2} | ${s3} ]\n\n**Resultado:** ${res}\n*Tu frase:* "${frase}"`);
+    }
+
+    // 4. NEKOASK
     if (cmd === 'nekoask') {
       const gato = ["Miau (Sí)", "Fush (No)", "Prrr (Puede ser)", "Miau rancio (Ni ahí)"];
       return message.reply(`🐱 **Neko dice:** ${gato[Math.floor(Math.random() * gato.length)]}`);
     }
 
+    // 5. BARDO
     if (cmd === 'bardo') return message.reply(["Fantasma", "Bobo", "Cerrá el orto, Tricky", "Andá a lavar los platos"][Math.floor(Math.random() * 4)]);
 
-    if (cmd === 'stats') return message.reply(`📊 Atlas: ${mongoose.connection.readyState === 1 ? "ON" : "OFF"} | Memoria: ${memory.phrases.length} | Stickers: ${extras.stickers.length}`);
-
+    // 6. CONFESIÓN
     if (cmd === 'confesion') {
       const t = args.join(" ");
       if (t) {
@@ -156,19 +176,23 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    if (cmd === 'universo' || cmd === 'universefacts') {
-      let av = universe.facts.filter(f => !universe.usedToday.includes(f));
-      if (!av.length) return message.reply("🌌 **Bonus Tarántula:** En 30 Doradus viven las estrellas Wolf-Rayet más calientes!");
-      const s = av[Math.floor(Math.random() * av.length)];
-      universe.usedToday.push(s); saveFile(FILES.universe, universe);
-      return message.reply(s);
-    }
-
+    // 7. MANTENIMIENTO
+    if (cmd === 'stats') return message.reply(`📊 Atlas: ${mongoose.connection.readyState === 1 ? "ON" : "OFF"} | Memoria: ${memory.phrases.length} | Stickers: ${extras.stickers.length}`);
     if (cmd === 'pausa') { isPaused = true; return message.reply("Me fui a dormir."); }
     if (cmd === 'reanudar') { isPaused = false; return message.reply("Ya llegué perritas 🔥"); }
     if (cmd === 'reload' || cmd === 'reloadjson') {
        memory = validateJSON(FILES.memory, memory);
+       extras = validateJSON(FILES.extras, extras);
+       universe = validateJSON(FILES.universe, universe);
        return message.reply("♻️ Memoria refrescada.");
+    }
+    
+    if (cmd === 'universo' || cmd === 'universefacts') {
+      let av = universe.facts.filter(f => !universe.usedToday.includes(f));
+      if (!av.length) return message.reply("🌌 **Bonus Tarántula:** En 30 Doradus viven las estrellas Wolf-Rayet!");
+      const s = av[Math.floor(Math.random() * av.length)];
+      universe.usedToday.push(s); saveFile(FILES.universe, universe);
+      return message.reply(s);
     }
   }
 
