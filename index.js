@@ -15,21 +15,23 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// --- CONFIGURACIÓN DE BASE DE DATOS ---
+// --- CONFIGURACIÓN DE IDENTIDADES Y DB ---
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
 let cachedConfig = { phrases: [], extras: {} };
 
-const ID_PATROCLO_ORIGINAL = 'TU_ID_AQUÍ'; 
+// IDs CONFIGURADOS
+const ID_PATROCLO_ORIGINAL = '974297735559806986'; 
+const MI_ID_BOSS = '986680845031059526';
 
 async function connectDb() {
   try {
-    await mongoClient.connect();
+    await mongoClient.connect({ serverSelectionTimeoutMS: 5000 });
     const database = mongoClient.db('patroclo_bot');
     usersColl = database.collection('users');
     dataColl = database.collection('bot_data');
+    console.log("✅ Sistema Full ADN Conectado");
     await loadConfig(true);
-    console.log("✅ Conexión con MongoDB establecida.");
   } catch (e) { await loadConfig(false); }
 }
 
@@ -66,7 +68,8 @@ Para conocimiento de los usuarios, el sistema se divide en dos fases:
 • **!ruleta [monto]**: Sistema de Slots con multiplicador x5.
 • **!universefacts**: Datos astronómicos de la base de datos.
 • **!confesion [texto]**: Mensajería anónima con borrado automático.
-• **!spoty**: Recomendaciones y datos acústicos espaciales.
+• **!bola8 [pregunta]**: Consulta al oráculo del ADN.
+• **!horoscopo [signo]**: Predicción astral diaria.
     `;
     await channel.send(explicacion);
   }
@@ -87,7 +90,7 @@ client.on('messageCreate', async (msg) => {
 
   const content = msg.content.toLowerCase();
 
-  // APRENDIZAJE ADN (Sin comandos ni links)
+  // 1. APRENDIZAJE ADN
   if (!msg.author.bot && dataColl && !content.startsWith('!') && !content.includes("http") && msg.content.length > 2 && msg.content.length < 200) {
     if (!cachedConfig.phrases.includes(msg.content)) {
       await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
@@ -95,7 +98,7 @@ client.on('messageCreate', async (msg) => {
     }
   }
 
-  // INTERVENCIÓN ALEATORIA
+  // 2. RESPUESTAS AUTOMÁTICAS
   if ((content.includes("patroclo") || content.includes("patroclin") || msg.mentions.has(client.user.id) || Math.random() < 0.15) && !content.startsWith('!')) {
     const r = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)];
     return msg.channel.send(r || "Qué onda facha?");
@@ -105,10 +108,26 @@ client.on('messageCreate', async (msg) => {
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // --- COMANDOS MULTIMEDIA Y MÍSTICA ---
-  if (cmd === 'spoty') {
-    const temas = ["🔥 Perreo galáctico: https://open.spotify.com/track/60Sndv0veYf98n77JmZzCR", "🌌 El sonido no se propaga en el vacío absoluto."];
-    return msg.reply(temas[Math.floor(Math.random() * temas.length)]);
+  // --- MÍSTICA Y ESPACIO ---
+  if (cmd === 'universefacts') {
+    try {
+      const uniData = JSON.parse(fs.readFileSync('./universe.json', 'utf8'));
+      const extraData = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
+      let pool = [...uniData.facts];
+      if (extraData.universe_bonus) pool.push(...extraData.universe_bonus);
+      return msg.reply(`🌌 **UNIVERSE:** ${pool[Math.floor(Math.random() * pool.length)]}`);
+    } catch (e) { return msg.reply("Error de lectura estelar."); }
+  }
+
+  if (cmd === 'bola8') {
+    const r = ["Sí.", "No.", "D1.", "Preguntale a tu vieja.", "Respetá la complexión de la cara.", "Olvidate, de una.", "Ni ahí, rati."];
+    const respuesta = Math.random() < 0.2 ? cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)] : r[Math.floor(Math.random() * r.length)];
+    return msg.reply(`🎱 **BOLA 8:** ${respuesta}`);
+  }
+
+  if (cmd === 'horoscopo') {
+    const h = ["Materia Oscura: Estás domado.", "Satélite Viejo: Girás al pedo.", "Nebulosa: No se ve nada.", "Supernova: Hoy explotás de facha.", "Agujero Negro: Tu billetera está en peligro."];
+    return msg.reply(`✨ **HORÓSCOPO:** ${h[Math.floor(Math.random() * h.length)]}`);
   }
 
   if (cmd === 'confesion') {
@@ -118,32 +137,35 @@ client.on('messageCreate', async (msg) => {
     return msg.channel.send(`🤫 **CONFESIÓN ANÓNIMA:**\n"${texto}"`);
   }
 
-  if (cmd === 'universefacts') {
-    try {
-      const uniData = JSON.parse(fs.readFileSync('./universe.json', 'utf8'));
-      const extraData = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
-      let pool = [...uniData.facts];
-      if (extraData.universe_bonus) pool.push(...extraData.universe_bonus);
-      return msg.reply(`🌌 **UNIVERSE:** ${pool[Math.floor(Math.random() * pool.length)]}`);
-    } catch (e) { return msg.reply("Error en la lectura de datos."); }
+  if (cmd === 'spoty') {
+    const temas = ["🔥 Perreo: https://open.spotify.com/track/60Sndv0veYf98n77JmZzCR", "🌌 Dato: El sonido no viaja en el vacío.", "🔥 Mix: https://open.spotify.com/track/127Q3Y79pU9u9I96S963mY"];
+    return msg.reply(temas[Math.floor(Math.random() * temas.length)]);
   }
 
-  // --- ECONOMÍA Y JUEGOS ---
+  // --- TIMBA Y ECONOMÍA ---
   const user = await getUser(msg.author.id);
   if (!user) return;
 
   if (cmd === 'daily') {
-    if (Date.now() - user.lastDaily < 86400000) return msg.reply("Ya has reclamado tus puntos hoy.");
+    if (Date.now() - user.lastDaily < 86400000) return msg.reply("Seco, ya cobraste.");
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 300 }, $set: { lastDaily: Date.now() } });
-    return msg.reply("💵 Has recibido **300 Patro-Pesos**.");
+    return msg.reply("💵 Tomá tus **300 Patro-Pesos**.");
   }
 
   if (cmd === 'bal' || cmd === 'perfil') return msg.reply(`💰 **BILLETERA:** Tienes **${user.points} Patro-Pesos**.`);
 
+  if (cmd === 'suerte') {
+    const bet = parseInt(args[0]);
+    if (isNaN(bet) || bet > user.points || bet <= 0) return msg.reply("No tenés esa plata.");
+    const gano = Math.random() < 0.5;
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gano ? bet : -bet } });
+    return msg.reply(gano ? `🪙 **GANASTE:** +${bet}` : `💀 **PERDISTE:** -${bet}`);
+  }
+
   if (cmd === 'ruleta') {
     const bet = parseInt(args[0]);
     if (isNaN(bet) || bet > user.points || bet <= 0) return msg.reply("Fondos insuficientes.");
-    const emojis = ["🍒", "💎", "🌟", "🎰", "🔥"];
+    const emojis = ["🍒", "💎", "🎰", "🔥", "🌟"];
     const r = [emojis[Math.floor(Math.random()*5)], emojis[Math.floor(Math.random()*5)], emojis[Math.floor(Math.random()*5)]];
     const jackpot = r[0] === r[1] && r[1] === r[2];
     let res = `🎰 **PATROCLO SLOTS**\n[ ${r[0]} | ${r[1]} | ${r[2]} ]\n\n`;
@@ -152,21 +174,31 @@ client.on('messageCreate', async (msg) => {
       res += `✨ **JACKPOT!** Ganaste **${bet * 5}**.`;
     } else {
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -bet } });
-      res += `💀 Perdiste **${bet}**.`;
+      res += `💀 **AL LOBBY.** Perdiste **${bet}**.`;
     }
     return msg.reply(res);
   }
 
-  if (cmd === 'suerte') {
-    const bet = parseInt(args[0]);
-    if (isNaN(bet) || bet > user.points || bet <= 0) return msg.reply("Fondos insuficientes.");
-    const gano = Math.random() < 0.5;
-    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gano ? bet : -bet } });
-    return msg.reply(gano ? `🪙 **GANASTE:** +${bet}` : `💀 **PERDISTE:** -${bet}`);
+  // --- SISTEMA ---
+  if (cmd === 'stats') {
+    const f = cachedConfig.phrases;
+    return msg.reply(`📊 **PATRO-STATS:**\n🧠 Memoria: ${f.length}\n✅ DB: ONLINE\n👑 Boss: ${msg.author.id === MI_ID_BOSS ? "Reconocido" : "Usuario"}`);
   }
 
-  if (cmd === 'stats') {
-    return msg.reply(`📊 **STATS:** Frases ADN: ${cachedConfig.phrases.length} | DB: ONLINE`);
+  if (cmd === 'bardo') {
+    const insultos = ["Sos un cara de rampa.", "Respetá la complexión de la cara.", "Tenés menos onda que un renglón."];
+    return msg.reply(`🔥 ${insultos[Math.floor(Math.random() * insultos.length)]}`);
+  }
+
+  if (cmd === 'ayudacmd') {
+    return msg.reply("📜 **BIBLIA B01:** !daily, !bal, !suerte, !ruleta, !bola8, !universefacts, !horoscopo, !spoty, !gif, !bardo, !confesion, !stats");
+  }
+
+  if (cmd === 'reload' && msg.author.id === MI_ID_BOSS) { await loadConfig(!!dataColl); return msg.reply("♻️ Memoria refrescada."); }
+
+  if (cmd === 'gif') {
+    const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ') || 'meme'}&limit=1&rating=g`);
+    return msg.reply(res.data.data[0]?.url || "Nada, facha.");
   }
 });
 
