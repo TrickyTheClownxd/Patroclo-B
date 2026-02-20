@@ -28,7 +28,9 @@ let usersColl, dataColl;
 let cachedConfig = { phrases: [], extras: {} };
 if (!client.retos) client.retos = new Map();
 
-// --- CONFIGURACIÓN DE IDENTIDAD ---
+// Variable para guardar el "Mejor Mensaje" de la sesión
+let mejorMensajeSesion = { texto: "Nada interesante todavía...", autor: "Nadie" };
+
 const ID_PATROCLO_ORIGINAL = '974297735559806986'; 
 const MI_ID_BOSS = '986680845031059526';
 
@@ -70,8 +72,10 @@ client.once('ready', async () => {
 • **B01.5:** Migración a MongoDB y aprendizaje pasivo (ADN).
 • **B01.6:** Comandos de mística, universo y confesiones.
 • **B01.7 (Actual):** - 🎮 **Duelos:** !poker y !penal 1vs1 entre pibes.
-  - 🛒 **Tienda:** !tienda y !comprar (VIP, Escudos).
-  - 🔧 **Fixes:** Re-activación de !foto, !spoty y buscador multimedia.
+  - 🎰 **Casino:** !ruleta y !suerte integrados.
+  - 🛒 **Tienda:** !tienda y !comprar.
+  - 🌌 **Mística:** !universefacts reactivado.
+  - 🏆 **Sentimientos:** El bot ahora elige y fija el mejor mensaje antes de la actu.
     `;
     await channel.send(historial);
   }
@@ -88,17 +92,27 @@ async function getUser(id) {
 }
 
 client.on('messageCreate', async (msg) => {
-  // Solo responde a humanos o al Patroclo Original
   if (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL) return;
 
   const content = msg.content.toLowerCase();
   const user = await getUser(msg.author.id);
 
-  // --- SISTEMA ADN (APRENDIZAJE) ---
-  if (!msg.author.bot && dataColl && !content.startsWith('!') && !content.includes("http") && msg.content.length > 2) {
-    if (!cachedConfig.phrases.includes(msg.content)) {
-      await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
-      cachedConfig.phrases.push(msg.content);
+  // --- LÓGICA DEL MEJOR MENSAJE (ADN) ---
+  if (!msg.author.bot && !content.startsWith('!') && msg.content.length > 5) {
+    // Si el mensaje actual es más largo que el record guardado, lo actualizamos
+    if (msg.content.length > mejorMensajeSesion.texto.length) {
+      mejorMensajeSesion = {
+        texto: msg.content,
+        autor: msg.author.username,
+        msgRef: msg
+      };
+    }
+
+    if (dataColl && !content.includes("http")) {
+      if (!cachedConfig.phrases.includes(msg.content)) {
+        await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
+        cachedConfig.phrases.push(msg.content);
+      }
     }
   }
 
@@ -112,51 +126,83 @@ client.on('messageCreate', async (msg) => {
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // --- JUEGOS Y RETOS 1vs1 ---
+  // --- COMANDOS DE TIMBA ---
+  if (cmd === 'suerte') {
+    const monto = parseInt(args[0]) || 100;
+    if (user.points < monto) return msg.reply("No tenés esa guita, laburá.");
+    const gana = Math.random() < 0.5;
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gana ? monto : -monto } });
+    return msg.reply(gana ? `🍀 **SUERTE:** Ganaste **${monto}** Patro-Pesos.` : `💀 **MALA SUERTE:** Perdiste **${monto}**.`);
+  }
+
+  if (cmd === 'ruleta') {
+    const monto = parseInt(args[0]);
+    const apuesta = args[1];
+    if (!monto || !apuesta || user.points < monto) return msg.reply("Uso: `!ruleta [monto] [rojo/negro/numero]`");
+    const num = Math.floor(Math.random() * 37);
+    const color = num === 0 ? "verde" : (num % 2 === 0 ? "rojo" : "negro");
+    let gano = (apuesta === color || parseInt(apuesta) === num);
+    let mult = parseInt(apuesta) === num ? 35 : 2;
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gano ? monto * (mult - 1) : -monto } });
+    return msg.reply(`🎰 Cayó el **${num} (${color})**. ${gano ? `¡Ganaste **${monto * mult}**!` : `Perdiste **${monto}**.`}`);
+  }
+
   if (cmd === 'poker') {
     const mencion = msg.mentions.users.first();
     const monto = parseInt(args[1]) || parseInt(args[0]);
-    if (isNaN(monto) || monto <= 0 || (user && user.points < monto)) return msg.reply("No tenés esa guita, laburá.");
-
+    if (isNaN(monto) || monto <= 0 || user.points < monto) return msg.reply("Revisá tu billetera.");
     if (!mencion) {
       const gano = Math.random() < 0.35;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gano ? Math.floor(monto * 1.5) : -monto } });
-      return msg.reply(gano ? `🃏 **GANASTE:** Sacaste color y te llevaste **${Math.floor(monto * 1.5)}**.` : `💀 **PERDISTE:** La casa te peló **${monto}**.`);
+      return msg.reply(gano ? `🃏 Ganaste **${Math.floor(monto * 1.5)}**.` : `💀 Perdiste **${monto}**.`);
     } else {
       client.retos.set(mencion.id, { tipo: 'poker', retador: msg.author.id, monto: monto });
-      return msg.channel.send(`🃏 **RETO:** ${mencion}, <@${msg.author.id}> te desafió a Póker por **${monto}**. Escribí \`!aceptar\`.`);
+      return msg.channel.send(`🃏 **RETO:** ${mencion}, te desafiaron por **${monto}**. \`!aceptar\`.`);
     }
   }
 
   if (cmd === 'penal') {
     const mencion = msg.mentions.users.first();
     const monto = parseInt(args[1]) || 100;
-    if (user.points < monto) return msg.reply("No tenés Patro-Pesos suficientes.");
-    if (mencion) {
+    if (mencion && user.points >= monto) {
       client.retos.set(mencion.id, { tipo: 'penal', retador: msg.author.id, monto: monto });
-      return msg.channel.send(`⚽ **DUELO:** ${mencion}, prepará los guantes. <@${msg.author.id}> te retó por **${monto}**. \`!aceptar\`.`);
+      return msg.channel.send(`⚽ **DUELO:** ${mencion}, te retaron por **${monto}**. \`!aceptar\`.`);
     }
   }
 
   if (cmd === 'aceptar') {
     const reto = client.retos.get(msg.author.id);
-    if (!reto) return msg.reply("Nadie te retó, fantasma.");
+    if (!reto) return msg.reply("Nadie te retó.");
     const win = Math.random() < 0.5;
     const g = win ? reto.retador : msg.author.id;
     const p = win ? msg.author.id : reto.retador;
     await usersColl.updateOne({ userId: g }, { $inc: { points: reto.monto } });
     await usersColl.updateOne({ userId: p }, { $inc: { points: -reto.monto } });
     client.retos.delete(msg.author.id);
-    return msg.channel.send(`🏆 **FINAL:** <@${g}> ganó el duelo y se lleva **${reto.monto}** de <@${p}>.`);
+    return msg.channel.send(`🏆 **GANADOR:** <@${g}> se lleva **${reto.monto}**.`);
   }
 
-  // --- MULTIMEDIA (FIXED) ---
-  if (cmd === 'foto' || cmd === 'gif') {
-    const q = args.join(' ') || 'meme';
+  // --- MÍSTICA ---
+  if (cmd === 'universefacts') {
     try {
-      const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${q}&limit=1`);
-      return msg.reply(res.data.data[0]?.url || "No encontré nada, facha.");
-    } catch (e) { return msg.reply("Giphy está la gorra, no anda."); }
+      const uniData = JSON.parse(fs.readFileSync('./universe.json', 'utf8'));
+      const extraData = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
+      let pool = [...uniData.facts, ...(extraData.universe_bonus || [])];
+      return msg.reply(`🌌 **UNIVERSE:** ${pool[Math.floor(Math.random() * pool.length)]}`);
+    } catch (e) { return msg.reply("Error estelar."); }
+  }
+
+  if (cmd === 'horoscopo') {
+    const h = ["Tu energía astral está flama.", "Cuidado con la materia oscura.", "Timbeá que hoy los astros te bancan."];
+    return msg.reply(`🔮 ${h[Math.floor(Math.random()*h.length)]}`);
+  }
+
+  // --- MULTIMEDIA ---
+  if (cmd === 'foto' || cmd === 'gif') {
+    try {
+      const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ')||'meme'}&limit=1`);
+      return msg.reply(res.data.data[0]?.url || "Nada che.");
+    } catch (e) { return msg.reply("Error con la API."); }
   }
 
   if (cmd === 'spoty') {
@@ -164,89 +210,37 @@ client.on('messageCreate', async (msg) => {
     return msg.reply(`🎶 **PATRO-MIX:** ${music[Math.floor(Math.random()*music.length)]}`);
   }
 
-  // --- MÍSTICA & MIX ---
-  if (cmd === 'horoscopo') {
-    const frases = ["Hoy una supernova traerá cambios a tu billetera.", "Cuidado con Mercurio retrogrado en el chat.", "Tu energía astral dice: Timbeá todo en la ruleta."];
-    return msg.reply(`🔮 **ASTRAL:** ${frases[Math.floor(Math.random()*frases.length)]}`);
-  }
-
-  if (cmd === 'bardo') {
-    const insultos = ["sos un fantasma", "no te quiere ni tu vieja", "seguí laburando que sos pobre", "tenés menos onda que un renglón"];
-    return msg.reply(insultos[Math.floor(Math.random()*insultos.length)]);
-  }
-
-  if (cmd === 'cuanto') {
-    const n = Math.floor(Math.random() * 101);
-    return msg.reply(`📊 El nivel de **${args.join(' ') || 'facha'}** es de un **${n}%**.`);
-  }
-
-  // --- TIENDA ---
-  if (cmd === 'tienda') {
-    return msg.reply("🛒 **PATRO-TIENDA**\n1. VIP Pass (5000 pts)\n2. Escudo Anti-Bardo (2000 pts)\nUsa `!comprar [id]`");
-  }
-
-  if (cmd === 'comprar') {
-    const p = args[0] === "1" ? 5000 : 2000;
-    if (user.points < p) return msg.reply("No te alcanza, seco.");
-    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -p }, $push: { inventario: args[0] } });
-    return msg.reply("✅ Compra realizada. Ya tenés facha.");
-  }
-
-  // --- GESTIÓN (BOSS) ---
+  // --- GESTIÓN Y MANTENIMIENTO ---
   if (cmd === 'mantenimiento' && msg.author.id === MI_ID_BOSS) {
+    // Fija el mejor mensaje antes de apagar
+    if (mejorMensajeSesion.msgRef) {
+      try {
+        await mejorMensajeSesion.msgRef.pin();
+        await msg.channel.send(`📌 **RECUERDO DE LA SESIÓN:** El bot piensa que este fue el mejor mensaje: "${mejorMensajeSesion.texto}" (by ${mejorMensajeSesion.autor})`);
+      } catch (e) { console.log("Error al fijar mensaje."); }
+    }
+
     const banner = `
 ╔════════════════════════╗
       ⚠️  **SISTEMA OFFLINE** ⚠️
 ╚════════════════════════╝
 **¿TE LO VUELVO A ACTIVAR?** *En breve...*
-El Boss está actualizando el ADN.`;
+El Boss está actualizando el ADN. Se fijó el mejor mensaje de la tanda.`;
     return msg.channel.send(banner);
   }
 
-  if (cmd === 'reloadjson' && msg.author.id === MI_ID_BOSS) {
-    const local = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
-    await dataColl.updateOne({ id: "main_config" }, { $set: { phrases: local.phrases } }, { upsert: true });
-    await loadConfig(true); 
-    return msg.reply("♻️ JSON sincronizado con la DB.");
-  }
-
-  if (cmd === 'reload') {
-    await loadConfig(true);
-    return msg.reply("♻️ Memoria RAM refrescada.");
-  }
-
-  if (cmd === 'stats') {
-    return msg.reply(`📈 **STATS PATRO-B:**\n• Boss: ${msg.author.id === MI_ID_BOSS ? "Si" : "No"}\n• ADN: ${cachedConfig.phrases.length} frases\n• DB: Online ✅`);
-  }
-
-  if (cmd === 'sugerencia') {
-    const idea = args.join(' ');
-    if (dataColl && idea) {
-      await dataColl.insertOne({ type: "sugerencia", user: msg.author.username, texto: idea });
-      return msg.reply("📩 Idea guardada para el Boss.");
-    }
-  }
-
-  // --- BIBLIA ---
   if (cmd === 'ayudacmd') {
-    const biblia = `
-📜 **BIBLIA PATROCLO B01.7**
-💰 **TIMBA:** !poker, !penal, !aceptar, !daily, !bal
-🛒 **SHOP:** !tienda, !comprar
-🎭 **MIX:** !spoty, !foto, !gif, !horoscopo, !bardo, !cuanto, !bola8
-⚙️ **ADMIN:** !stats, !reload, !reloadjson, !mantenimiento, !sugerencia
-    `;
-    return msg.reply(biblia);
+    return msg.reply(`📜 **BIBLIA B01.7**\nTimba: !poker, !penal, !aceptar, !ruleta, !suerte, !daily, !bal\nMix: !universefacts, !spoty, !foto, !gif, !horoscopo, !bardo, !cuanto\nStaff: !stats, !reload, !mantenimiento`);
   }
 
   if (cmd === 'daily') {
-    if (Date.now() - user.lastDaily < 86400000) return msg.reply("Mañana volvé, facha.");
+    if (Date.now() - user.lastDaily < 86400000) return msg.reply("Mañana.");
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 300 }, $set: { lastDaily: Date.now() } });
-    return msg.reply("💵 +300 Patro-Pesos a tu cuenta.");
+    return msg.reply("💵 +300.");
   }
 
-  if (cmd === 'bal') return msg.reply(`💰 Billetera: **${user.points} Patro-Pesos**.`);
-
+  if (cmd === 'bal') return msg.reply(`💰 Billetera: **${user.points}**.`);
+  if (cmd === 'stats') return msg.reply(`📈 ADN: ${cachedConfig.phrases.length} frases aprendidas.`);
 });
 
 client.login(process.env.TOKEN);
