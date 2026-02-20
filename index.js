@@ -1,149 +1,99 @@
 import fs from 'fs';
 import http from 'http';
-import { Client, GatewayIntentBits, ChannelType, PermissionFlagsBits } from 'discord.js';
+import { Client, GatewayIntentBits } from 'discord.js';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
 
 dotenv.config();
 
-// --- SERVER PARA RAILWAY ---
-http.createServer((req, res) => { res.write("Patroclo-B V48.0 Online"); res.end(); }).listen(process.env.PORT || 8080);
+// --- SERVER ---
+http.createServer((req, res) => { res.write("Patroclo-B B01 Online"); res.end(); }).listen(process.env.PORT || 8080);
 
-// --- ESQUEMAS MONGO ---
-const User = mongoose.model('User', new mongoose.Schema({
-  userId: String, username: String, coins: { type: Number, default: 500 }, lastDaily: { type: Date, default: new Date(0) }
-}));
-
-// --- BOT CONFIG ---
-const client = new Client({ 
-  intents: [
-    GatewayIntentBits.Guilds, 
-    GatewayIntentBits.GuildMessages, 
-    GatewayIntentBits.MessageContent 
-  ] 
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers]
 });
 
-const FILES = { memory: './memory.json', extras: './extras.json', universe: './universe.json' };
-let memory = { phrases: [] }, extras = { spaceData: [] }, universe = { facts: [] };
-let lastChannelId = null, lastMessageTime = Date.now(), isPaused = false;
+const FILES = { memory: './memory.json', universe: './universe.json', extras: './extras.json' };
+let memory, universe, extras;
+let lastChannelId = null, lastMessageTime = Date.now(), botPaused = false;
 
-function validateJSON(path, def) {
-  try { return fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, 'utf8')) : def; } catch (e) { return def; }
-}
-
-// --- FUNCIÓN ANTICRASH DE USUARIO ---
-async function getSafeUser(author) {
+const loadData = () => {
   try {
-    if (mongoose.connection.readyState !== 1) {
-      return { userId: author.id, username: author.username, coins: 0, isDummy: true };
-    }
-    let u = await User.findOne({ userId: author.id });
-    if (!u) u = await User.create({ userId: author.id, username: author.username });
-    return u;
-  } catch (e) { 
-    console.log("⚠️ Error de DB, usando modo Dummy.");
-    return { userId: author.id, username: author.username, coins: 0, isDummy: true }; 
-  }
-}
+    memory = JSON.parse(fs.readFileSync(FILES.memory, 'utf8'));
+    universe = JSON.parse(fs.readFileSync(FILES.universe, 'utf8'));
+    extras = JSON.parse(fs.readFileSync(FILES.extras, 'utf8'));
+  } catch (e) { console.error("Revisá que los .json existan"); }
+};
+loadData();
 
-client.on('ready', async () => {
-  console.log("✅ Patroclo-B V48.0 Online.");
-  memory = validateJSON(FILES.memory, { phrases: [] });
-  extras = validateJSON(FILES.extras, { spaceData: [] });
-  universe = validateJSON(FILES.universe, { facts: [] });
-  
-  if (process.env.MONGO_URI) {
-    mongoose.connect(process.env.MONGO_URI)
-      .then(() => console.log("🔗 DB Conectada"))
-      .catch(e => console.log("❌ Error de Atlas:", e.message));
+// --- HABLA SAGRADA (Menciones, Respuestas, Revividor) ---
+const handleHabla = async (msg) => {
+  if (botPaused) return;
+  const isMentioned = msg.mentions.has(client.user) || msg.content.toLowerCase().includes("patroclo");
+  const isReplyToMe = msg.reference && (await msg.channel.messages.fetch(msg.reference.messageId)).author.id === client.user.id;
+
+  if (isMentioned || isReplyToMe) {
+    const r = memory.phrases[Math.floor(Math.random() * memory.phrases.length)] || "qué onda";
+    return msg.reply(r);
+  }
+};
+
+client.on('ready', () => {
+  const channel = client.channels.cache.find(ch => ch.type === 0 && ch.permissionsFor(client.user).has("SendMessages"));
+  if (channel) {
+    channel.send("Ya llegué perritas 🔥. Las versiones **V** fueron mi etapa Alfa. Ahora entramos en la **Fase B (Beta)** con el código **B01**. ¡A darle mecha!");
   }
 });
 
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   lastChannelId = msg.channel.id; lastMessageTime = Date.now();
-  const content = msg.content.toLowerCase();
 
-  // APRENDIZAJE
-  if (!content.startsWith('!') && content.length > 2 && !isPaused) {
+  // Aprendizaje automático
+  if (!msg.content.startsWith('!') && msg.content.length > 2 && !botPaused) {
     if (!memory.phrases.includes(msg.content)) {
       memory.phrases.push(msg.content);
       fs.writeFileSync(FILES.memory, JSON.stringify(memory, null, 2));
     }
   }
 
-  if (content.startsWith('!')) {
-    const args = msg.content.slice(1).split(/\s+/);
-    const cmd = args.shift().toLowerCase();
-    const user = await getSafeUser(msg.author);
+  if (!msg.content.startsWith('!')) return await handleHabla(msg);
 
-    try {
-      // AYUDA (Siempre funciona)
-      if (cmd === 'ayuda') {
-        return msg.reply("📜 Comandos: `!bal`, `!daily`, `!suerte`, `!transferir`, `!confesion`, `!bola8`, `!bardo`, `!spoty`, `!reload`.");
-      }
+  const args = msg.content.slice(1).split(/\s+/);
+  const cmd = args.shift().toLowerCase();
 
-      // RELOADS
-      if (cmd === 'reload') return msg.reply("♻️ Sistema activo y escuchando.");
-      if (cmd === 'reloadjson') { memory = validateJSON(FILES.memory, { phrases: [] }); return msg.reply("📂 Memoria refrescada."); }
-
-      // ECONOMÍA (Con chequeo de DB)
-      if (cmd === 'perfil' || cmd === 'bal') {
-        return msg.reply(user.isDummy ? "⚠️ DB Offline. Saldo: 0" : `🪙 Tienes **${user.coins} Patro-Pesos**.`);
-      }
-
-      if (cmd === 'daily') {
-        if (user.isDummy) return msg.reply("❌ MongoDB desconectado. No puedo guardar monedas.");
-        if (Date.now() - user.lastDaily < 86400000) return msg.reply("❌ Mañana vuelves.");
-        user.coins += 300; user.lastDaily = Date.now(); await user.save();
-        return msg.reply("💸 +300 Patro-Pesos.");
-      }
-
-      if (cmd === 'suerte') {
-        const apuesta = parseInt(args[0]);
-        if (user.isDummy) return msg.reply("❌ Casino cerrado: DB Offline.");
-        if (!apuesta || user.coins < apuesta) return msg.reply("🎰 No tienes esa guita.");
-        
-        const res = [Math.floor(Math.random()*5), Math.floor(Math.random()*5), Math.floor(Math.random()*5)];
-        let mult = (res[0]===res[1] && res[1]===res[2]) ? 10 : (res[0]===res[1] || res[1]===res[2] || res[0]===res[2]) ? 2 : 0;
-        user.coins = user.coins - apuesta + (apuesta * mult); await user.save();
-        return msg.reply(`🎰 [${res.join('|')}] - ${mult > 0 ? "¡GANASTE!" : "Perdiste."}`);
-      }
-
-      // INTERACCIÓN
-      if (cmd === 'bola8') return msg.reply(`🎱 "${memory.phrases[Math.floor(Math.random()*memory.phrases.length)] || "Ni idea."}"`);
-      if (cmd === 'bardo') return msg.reply(["Bobo", "Fantasma", "Cerrá el orto"][Math.floor(Math.random()*3)]);
-      
-      if (cmd === 'confesion') {
-        if (args.length > 0) {
-          memory.phrases.push(`[CONFESIÓN]: ${args.join(" ")}`);
-          fs.writeFileSync(FILES.memory, JSON.stringify(memory, null, 2));
-          await msg.delete().catch(() => {});
-          return msg.channel.send("🤫 Guardado.");
-        }
-        const confs = memory.phrases.filter(p => p.startsWith("[CONFESIÓN]:"));
-        if (confs.length === 0) return msg.reply("No hay confesiones.");
-        return msg.channel.send(`📢 **Confesión:** "${confs[Math.floor(Math.random()*confs.length)].replace("[CONFESIÓN]: ", "")}"`);
-      }
-
-    } catch (e) { console.error("Error en comando:", e); }
+  // --- COMANDOS ---
+  if (cmd === 'ayudacmd') {
+    return msg.reply(`📜 **BIBLIA DE COMANDOS - B01**\n\n**💰 ECONOMÍA:** !perfil, !daily, !suerte [m], !ruleta [m][c/n], !transferir @u [m].\n**🔮 MÍSTICA:** !spoty (50/50), !bola8 [p], !nekoask [p], !horoscopo, !universefacts.\n**🖕 SOCIAL:** !bardo (Argento), !confesion [t], !gif/!foto.\n**🛠️ ADMIN:** !stats, !reload, !reloadjson (Obligatorio), !pausa/!reanudar.`);
   }
 
-  // INTERVENCIÓN RANDOM
-  if (Math.random() < 0.15 && !isPaused && memory.phrases.length > 0 && !content.startsWith('!')) {
-    msg.channel.send(memory.phrases[Math.floor(Math.random()*memory.phrases.length)]).catch(()=>{});
+  if (cmd === 'reloadjson') { loadData(); return msg.reply("✅ **Archivos JSON recargados.**"); }
+  
+  if (cmd === 'spoty') {
+    if (Math.random() > 0.5) {
+      const reggaeton = ["link_reggaeton_viejo_1", "link_reggaeton_viejo_2"];
+      return msg.reply(`🔥 **Perreo viejo para activar:** ${reggaeton[Math.floor(Math.random()*reggaeton.length)]}`);
+    } else {
+      const facts = ["Nebulosa Tarántula proyectaría sombras...", "R136 tiene estrellas gigantes..."];
+      return msg.reply(`${facts[Math.floor(Math.random()*facts.length)]}\n🎧 **Viaje espacial:** link_psicodelico`);
+    }
   }
+
+  if (cmd === 'bardo') {
+    const insultos = ["¿Qué te hacés el loco, fantasma?", "Sos un descanso, flaco.", "Cerrá el orto, bobo."];
+    return msg.reply(insultos[Math.floor(Math.random()*insultos.length)]);
+  }
+
+  // Resto de lógica (!bola8, !stats, etc.)
 });
 
-// REVIVIDOR
+// --- REVIVIDOR 5 MIN ---
 setInterval(() => {
-  if (isPaused || !lastChannelId || Date.now() - lastMessageTime < 300000) return;
+  if (botPaused || !lastChannelId || Date.now() - lastMessageTime < 300000) return;
   const channel = client.channels.cache.get(lastChannelId);
   if (channel && memory.phrases.length > 0) {
-    const frase = memory.phrases[Math.floor(Math.random() * memory.phrases.length)];
-    if (frase && !frase.startsWith("[CONFESIÓN]")) channel.send(frase).catch(()=>{});
+    channel.send(memory.phrases[Math.floor(Math.random() * memory.phrases.length)]);
     lastMessageTime = Date.now();
   }
 }, 60000);
 
-client.login(process.env.TOKEN);
+client.login(process.env.BOT_TOKEN);
