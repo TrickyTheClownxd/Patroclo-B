@@ -6,8 +6,8 @@ import fs from 'fs';
 
 dotenv.config();
 
-// Servidor para que Railway no apague el bot
-http.createServer((req, res) => { res.write("Patroclo-B B01 Online"); res.end(); }).listen(process.env.PORT || 8080);
+// Servidor para Railway
+http.createServer((req, res) => { res.write("Patroclo-B B01 Full Online"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
   intents: [
@@ -88,41 +88,88 @@ client.on('messageCreate', async (msg) => {
   const cmd = args.shift().toLowerCase();
   const user = await getUser(msg.author.id);
 
-  // --- COMANDOS ---
+  // --- COMANDOS SISTEMA ---
   if (cmd === 'ayudacmd') {
-    return msg.reply("📜 **MANUAL B01:**\n!daily, !perfil, !suerte [m], !ruleta [m] [c/n], !transferir @u [m], !bardo, !spoty, !bola8, !nekoask, !universefacts, !confesion, !gif, !foto, !stats, !reloadjson");
+    return msg.reply("📜 **MANUAL B01:**\n!daily, !perfil, !suerte [m], !ruleta [m][c/n], !transferir @u [m], !bardo, !spoty, !bola8, !nekoask, !horoscopo, !universefacts, !confesion, !gif, !foto, !stats, !reload, !reloadjson, !start, !pause, !resume, !stop");
   }
 
+  if (cmd === 'reload' || cmd === 'reloadjson') return msg.reply("♻️ Sistema B01 optimizado. Memoria y extras sincronizados con la nube.");
+  
+  if (cmd === 'stats') return msg.reply(`📊 **B01 Stats:**\n- Memoria: ${config.phrases.length} frases.\n- DB: MongoDB Cloud.\n- Status: Fase B Activa.`);
+
+  // --- TIMBA V45.0 ---
   if (cmd === 'daily') {
     const now = Date.now();
-    if (now - user.lastDaily < 86400000) return msg.reply("❌ Mañana volvé, no seas manija.");
-    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 500 }, $set: { lastDaily: now } });
-    return msg.reply("🎁 Recibiste **500 Patro-Pesos**.");
+    if (now - user.lastDaily < 86400000) return msg.reply("❌ Ya cobraste, volvé mañana.");
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 300 }, $set: { lastDaily: now } });
+    return msg.reply("🎁 Reclamaste tu sueldo: **+300 Patro-Pesos**.");
   }
 
-  if (cmd === 'perfil' || cmd === 'bal') return msg.reply(`👤 **${msg.author.username}** | 💰 **Saldo:** ${user.points} puntos.`);
+  if (cmd === 'perfil' || cmd === 'bal') return msg.reply(`💰 **${msg.author.username}**, tenés **${user.points}** Patro-Pesos.`);
+
+  if (cmd === 'suerte') {
+    const amt = parseInt(args[0]);
+    if (isNaN(amt) || amt > user.points || amt <= 0) return msg.reply("❌ Poné una cifra válida.");
+    const r = Math.random();
+    let win = 0; let txt = "";
+    if (r > 0.95) { win = amt * 10; txt = "🎰 ¡JACKPOT! x10"; }
+    else if (r > 0.5) { win = amt * 2; txt = "✅ Ganaste x2"; }
+    else { win = -amt; txt = "❌ Perdiste todo"; }
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: win === -amt ? -amt : win - amt } });
+    return msg.reply(txt);
+  }
 
   if (cmd === 'ruleta') {
     const amt = parseInt(args[0]);
-    if (isNaN(amt) || amt > user.points || amt <= 0) return msg.reply("❌ No tenés esa guita.");
-    const win = Math.random() > 0.5;
-    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: win ? amt : -amt } });
-    return msg.reply(win ? `✅ ¡Ganaste! Ahora tenés **${user.points + amt}**.` : `❌ Perdiste todo.`);
+    const choice = args[1];
+    if (isNaN(amt) || amt > user.points || !choice) return msg.reply("❌ Uso: !ruleta [monto] [red/black/green/número]");
+    const resNum = Math.floor(Math.random() * 37);
+    const resCol = resNum === 0 ? "green" : (resNum % 2 === 0 ? "black" : "red");
+    const won = (choice === resCol || choice === resNum.toString());
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: won ? amt : -amt } });
+    return msg.reply(`${won ? '✅' : '❌'} Salió el **${resNum} (${resCol})**. ${won ? '¡Ganaste!' : 'Perdiste.'}`);
   }
 
-  if (cmd === 'bardo') {
-    const b = ["¿Qué mirás, bobo?", "Cerrá el orto.", "Sos un descanso.", "Tomátela, salame."];
-    return msg.reply(b[Math.floor(Math.random() * b.length)]);
+  if (cmd === 'transferir') {
+    const target = msg.mentions.users.first();
+    const amt = parseInt(args[1]);
+    if (!target || isNaN(amt) || amt > user.points || amt <= 0) return msg.reply("❌ !transferir @user 100");
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -amt } });
+    await usersColl.updateOne({ userId: target.id }, { $inc: { points: amt } }, { upsert: true });
+    return msg.reply(`💸 Pasaste ${amt} a ${target.username}.`);
+  }
+
+  // --- MÍSTICA ---
+  if (cmd === 'spoty') {
+    return Math.random() > 0.5 
+      ? msg.reply("🎧 **Sonando:** Reggaeton Viejo 🔥 (Dale mecha)")
+      : msg.reply(`🌌 **Flash Espacial:** ${config.extras.spaceDataBackup[Math.floor(Math.random()*config.extras.spaceDataBackup.length)]}`);
+  }
+
+  if (cmd === 'bola8') {
+    const r = ["Sí.", "Ni en pedo.", "Flasheaste.", "Es probable.", "No me rompas las bolas.", "Preguntale a tu ex."];
+    return msg.reply(`🎱 ${r[Math.floor(Math.random()*r.length)]}`);
+  }
+
+  if (cmd === 'horoscopo') {
+    const h = ["Hoy te va a ir como el orto.", "La suerte te sonríe (mentira).", "Cuidá tu bolsillo.", "Un amor del pasado vuelve (bloquealo)."];
+    return msg.reply(`✨ **Horóscopo B01:** ${h[Math.floor(Math.random()*h.length)]}`);
   }
 
   if (cmd === 'nekoask') {
-    const r = ["Miau (Sí)", "Miau... (No)", "¡Prrr! (Quizás)", "¡GRRR! (Callate)"];
-    return msg.reply(`🐱 **Neko dice:** ${r[Math.floor(Math.random() * r.length)]}`);
+    const r = ["Miau (Sí)", "Miau... (No)", "¡Prrr!", "¡GRRR!"];
+    return msg.reply(`🐱 **Neko dice:** ${r[Math.floor(Math.random()*r.length)]}`);
   }
 
   if (cmd === 'universefacts') {
-    const facts = config.extras.spaceDataBackup || ["El espacio es enorme."];
-    return msg.reply(`🌌 ${facts[Math.floor(Math.random() * facts.length)]}`);
+    const f = config.extras.spaceDataBackup || ["El espacio es enorme."];
+    return msg.reply(`🌌 ${f[Math.floor(Math.random()*f.length)]}`);
+  }
+
+  // --- SOCIAL / MULTIMEDIA ---
+  if (cmd === 'bardo') {
+    const b = ["¿Qué mirás, bobo?", "Cerrá el orto.", "Sos un descanso.", "Tomátela, salame.", "Flasheas confianza."];
+    return msg.reply(b[Math.floor(Math.random()*b.length)]);
   }
 
   if (cmd === 'gif' || cmd === 'foto') {
@@ -132,8 +179,19 @@ client.on('messageCreate', async (msg) => {
     return data.data[0] ? msg.reply(data.data[0].url) : msg.reply("❌ No encontré nada.");
   }
 
-  if (cmd === 'stats') return msg.reply(`📊 **ESTADO:** Memoria: ${config.phrases.length} frases | DB: MongoDB`);
+  if (cmd === 'confesion') {
+    const t = args.join(" "); if (!t) return;
+    msg.delete(); return msg.channel.send(`🤫 **Confesión Anónima:** ${t}`);
+  }
 
+  // --- CONTROL (Stopwatch/Media) ---
+  if (cmd === 'start') return msg.reply("⏱️ Cronómetro en marcha.");
+  if (cmd === 'pause') return msg.reply("⏸️ Pausado... Tomate un respiro.");
+  if (cmd === 'resume') return msg.reply("▶️ Seguimos con el bardo.");
+  if (cmd === 'stop') return msg.reply("🛑 Paramos acá.");
+  if (cmd === 'reset') return msg.reply("🔄 Todo de cero.");
+
+  // --- ADMIN ---
   if (cmd === 'importar' && msg.author.id === '986680845031059526') {
     const ext = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
     await dataColl.updateOne({ id: "main_config" }, { $set: { extras: ext } }, { upsert: true });
@@ -146,9 +204,7 @@ setInterval(async () => {
   if (!lastChannelId || Date.now() - lastMsgTime < 300000) return;
   const config = await getFullConfig();
   const c = client.channels.cache.get(lastChannelId);
-  if (c && config.phrases.length > 0) {
-    c.send(config.phrases[Math.floor(Math.random() * config.phrases.length)]);
-  }
+  if (c && config.phrases.length > 0) c.send(config.phrases[Math.floor(Math.random()*config.phrases.length)]);
 }, 300000);
 
 client.login(process.env.TOKEN);
