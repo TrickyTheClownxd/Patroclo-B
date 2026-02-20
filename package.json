@@ -1,7 +1,7 @@
 {
-  "name": "patroclo-b-beta-b01",
-  "version": "1.1.0",
-  "description": "Patroclo-B Fase B01 - Beta Estelar",
+  "name": "patroclo-b-b01",
+  "version": "1.0.0",
+  "description": "Bot Patroclo-B Fase B01 - Full ADN, Universe y Timba",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -9,8 +9,11 @@
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "dotenv": "^16.4.5",
-    "mongoose": "^8.2.0",
-    "node-fetch": "^3.3.2"
+    "mongodb": "^6.3.0",
+    "dotenv": "^16.3.1",
+    "axios": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.x"
   }
 }
