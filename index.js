@@ -6,7 +6,6 @@ import fs from 'fs';
 
 dotenv.config();
 
-// Servidor para Railway
 http.createServer((req, res) => { res.write("Patroclo-B B01 Full Online"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
@@ -18,10 +17,10 @@ const client = new Client({
   ]
 });
 
-// --- CONFIGURACIÓN MONGODB ---
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
 let lastChannelId = null, lastMsgTime = Date.now();
+let cachedConfig = null; // Cache para optimizar el reload
 
 async function connectDb() {
   try {
@@ -30,16 +29,19 @@ async function connectDb() {
     usersColl = database.collection('users');
     dataColl = database.collection('bot_data');
     console.log("✅ Memoria infinita conectada (MongoDB)");
+    await loadConfig(); // Carga inicial
   } catch (e) { console.error("❌ Error Mongo:", e); }
 }
-connectDb();
 
-async function getFullConfig() {
-  return await dataColl.findOne({ id: "main_config" }) || { 
+async function loadConfig() {
+  cachedConfig = await dataColl.findOne({ id: "main_config" }) || { 
     phrases: [], 
     extras: { reacciones_auto: { palabras_clave: [], emojis: [] }, spaceDataBackup: [] } 
   };
+  console.log("♻️ Configuración sincronizada.");
 }
+
+connectDb();
 
 async function getUser(id) {
   let user = await usersColl.findOne({ userId: id });
@@ -50,7 +52,6 @@ async function getUser(id) {
   return user;
 }
 
-// --- EVENTO READY ---
 client.on('ready', () => {
   console.log(`🔥 ${client.user.tag} ONLINE`);
   const channel = client.channels.cache.find(ch => ch.type === 0 && ch.permissionsFor(client.user).has("SendMessages"));
@@ -62,24 +63,24 @@ client.on('ready', () => {
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
   lastChannelId = msg.channel.id; lastMsgTime = Date.now();
-  const config = await getFullConfig();
   const content = msg.content.toLowerCase();
 
-  // 1. REACCIONES AUTOMÁTICAS
-  config.extras.reacciones_auto?.palabras_clave.forEach((palabra, i) => {
-    if (content.includes(palabra)) msg.react(config.extras.reacciones_auto.emojis[i] || '🔥').catch(() => {});
+  // 1. REACCIONES AUTOMÁTICAS (Usando cache)
+  cachedConfig?.extras?.reacciones_auto?.palabras_clave.forEach((palabra, i) => {
+    if (content.includes(palabra)) msg.react(cachedConfig.extras.reacciones_auto.emojis[i] || '🔥').catch(() => {});
   });
 
-  // 2. APRENDIZAJE AUTOMÁTICO
+  // 2. APRENDIZAJE
   if (!msg.content.startsWith('!') && msg.content.length > 2) {
-    if (!config.phrases.includes(msg.content)) {
+    if (!cachedConfig.phrases.includes(msg.content)) {
       await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
+      cachedConfig.phrases.push(msg.content); // Actualiza cache local
     }
   }
 
   // 3. RESPUESTAS POR MENCIÓN
   if (msg.mentions.has(client.user) || content.includes("patroclo")) {
-    const rando = config.phrases[Math.floor(Math.random() * config.phrases.length)] || "Qué onda gato.";
+    const rando = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)] || "Qué onda gato.";
     return msg.reply(rando);
   }
 
@@ -90,19 +91,22 @@ client.on('messageCreate', async (msg) => {
 
   // --- COMANDOS SISTEMA ---
   if (cmd === 'ayudacmd') {
-    return msg.reply("📜 **MANUAL B01:**\n!daily, !perfil, !suerte [m], !ruleta [m][c/n], !transferir @u [m], !bardo, !spoty, !bola8, !nekoask, !horoscopo, !universefacts, !confesion, !gif, !foto, !stats, !reload, !reloadjson, !start, !pause, !resume, !stop");
+    return msg.reply("📜 **MANUAL B01:**\n!daily, !perfil, !suerte, !ruleta, !transferir, !bardo, !spoty, !bola8, !nekoask, !horoscopo, !universefacts, !confesion, !gif, !foto, !stats, !reload, !start, !pause, !stop");
   }
 
-  if (cmd === 'reload' || cmd === 'reloadjson') return msg.reply("♻️ Sistema B01 optimizado. Memoria y extras sincronizados con la nube.");
-  
-  if (cmd === 'stats') return msg.reply(`📊 **B01 Stats:**\n- Memoria: ${config.phrases.length} frases.\n- DB: MongoDB Cloud.\n- Status: Fase B Activa.`);
+  if (cmd === 'reload') {
+    await loadConfig();
+    return msg.reply("♻️ **Sistema Reiniciado:** Memoria y extras sincronizados con MongoDB. Todo 10/10.");
+  }
 
-  // --- TIMBA V45.0 ---
+  if (cmd === 'stats') return msg.reply(`📊 **B01 Stats:**\n- Frases en memoria: ${cachedConfig.phrases.length}\n- Base de Datos: Online\n- Fase: Beta B01`);
+
+  // --- TIMBA ---
   if (cmd === 'daily') {
     const now = Date.now();
-    if (now - user.lastDaily < 86400000) return msg.reply("❌ Ya cobraste, volvé mañana.");
+    if (now - user.lastDaily < 86400000) return msg.reply("❌ Mañana volvé, no seas manija.");
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 300 }, $set: { lastDaily: now } });
-    return msg.reply("🎁 Reclamaste tu sueldo: **+300 Patro-Pesos**.");
+    return msg.reply("🎁 Recibiste **300 Patro-Pesos**.");
   }
 
   if (cmd === 'perfil' || cmd === 'bal') return msg.reply(`💰 **${msg.author.username}**, tenés **${user.points}** Patro-Pesos.`);
@@ -111,65 +115,30 @@ client.on('messageCreate', async (msg) => {
     const amt = parseInt(args[0]);
     if (isNaN(amt) || amt > user.points || amt <= 0) return msg.reply("❌ Poné una cifra válida.");
     const r = Math.random();
-    let win = 0; let txt = "";
-    if (r > 0.95) { win = amt * 10; txt = "🎰 ¡JACKPOT! x10"; }
-    else if (r > 0.5) { win = amt * 2; txt = "✅ Ganaste x2"; }
-    else { win = -amt; txt = "❌ Perdiste todo"; }
+    let win = r > 0.95 ? amt * 10 : (r > 0.5 ? amt * 2 : -amt);
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: win === -amt ? -amt : win - amt } });
-    return msg.reply(txt);
+    return msg.reply(win > amt ? `🎰 ¡JACKPOT! x10` : (win > 0 ? `✅ Ganaste x2` : `❌ Perdiste todo`));
   }
 
   if (cmd === 'ruleta') {
-    const amt = parseInt(args[0]);
-    const choice = args[1];
-    if (isNaN(amt) || amt > user.points || !choice) return msg.reply("❌ Uso: !ruleta [monto] [red/black/green/número]");
+    const amt = parseInt(args[0]); const choice = args[1];
+    if (isNaN(amt) || amt > user.points || !choice) return msg.reply("❌ !ruleta [monto] [red/black/green]");
     const resNum = Math.floor(Math.random() * 37);
     const resCol = resNum === 0 ? "green" : (resNum % 2 === 0 ? "black" : "red");
-    const won = (choice === resCol || choice === resNum.toString());
+    const won = choice === resCol;
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: won ? amt : -amt } });
-    return msg.reply(`${won ? '✅' : '❌'} Salió el **${resNum} (${resCol})**. ${won ? '¡Ganaste!' : 'Perdiste.'}`);
+    return msg.reply(`🎰 Salió el **${resNum} (${resCol})**. ${won ? '¡Ganaste facha!' : 'Palmaste todo.'}`);
   }
 
-  if (cmd === 'transferir') {
-    const target = msg.mentions.users.first();
-    const amt = parseInt(args[1]);
-    if (!target || isNaN(amt) || amt > user.points || amt <= 0) return msg.reply("❌ !transferir @user 100");
-    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -amt } });
-    await usersColl.updateOne({ userId: target.id }, { $inc: { points: amt } }, { upsert: true });
-    return msg.reply(`💸 Pasaste ${amt} a ${target.username}.`);
-  }
-
-  // --- MÍSTICA ---
-  if (cmd === 'spoty') {
-    return Math.random() > 0.5 
-      ? msg.reply("🎧 **Sonando:** Reggaeton Viejo 🔥 (Dale mecha)")
-      : msg.reply(`🌌 **Flash Espacial:** ${config.extras.spaceDataBackup[Math.floor(Math.random()*config.extras.spaceDataBackup.length)]}`);
-  }
-
+  // --- MÍSTICA & SOCIAL ---
   if (cmd === 'bola8') {
-    const r = ["Sí.", "Ni en pedo.", "Flasheaste.", "Es probable.", "No me rompas las bolas.", "Preguntale a tu ex."];
+    const r = ["Sí.", "Ni en pedo.", "Flasheaste.", "Es probable.", "No me rompas las bolas."];
     return msg.reply(`🎱 ${r[Math.floor(Math.random()*r.length)]}`);
   }
 
-  if (cmd === 'horoscopo') {
-    const h = ["Hoy te va a ir como el orto.", "La suerte te sonríe (mentira).", "Cuidá tu bolsillo.", "Un amor del pasado vuelve (bloquealo)."];
-    return msg.reply(`✨ **Horóscopo B01:** ${h[Math.floor(Math.random()*h.length)]}`);
-  }
-
-  if (cmd === 'nekoask') {
-    const r = ["Miau (Sí)", "Miau... (No)", "¡Prrr!", "¡GRRR!"];
-    return msg.reply(`🐱 **Neko dice:** ${r[Math.floor(Math.random()*r.length)]}`);
-  }
-
-  if (cmd === 'universefacts') {
-    const f = config.extras.spaceDataBackup || ["El espacio es enorme."];
-    return msg.reply(`🌌 ${f[Math.floor(Math.random()*f.length)]}`);
-  }
-
-  // --- SOCIAL / MULTIMEDIA ---
-  if (cmd === 'bardo') {
-    const b = ["¿Qué mirás, bobo?", "Cerrá el orto.", "Sos un descanso.", "Tomátela, salame.", "Flasheas confianza."];
-    return msg.reply(b[Math.floor(Math.random()*b.length)]);
+  if (cmd === 'spoty') {
+    const facts = cachedConfig.extras.spaceDataBackup || ["El espacio es enorme."];
+    return Math.random() > 0.5 ? msg.reply("🎧 **Sonando:** Reggaeton Viejo 🔥") : msg.reply(`🌌 **Dato:** ${facts[Math.floor(Math.random()*facts.length)]}`);
   }
 
   if (cmd === 'gif' || cmd === 'foto') {
@@ -179,32 +148,23 @@ client.on('messageCreate', async (msg) => {
     return data.data[0] ? msg.reply(data.data[0].url) : msg.reply("❌ No encontré nada.");
   }
 
-  if (cmd === 'confesion') {
-    const t = args.join(" "); if (!t) return;
-    msg.delete(); return msg.channel.send(`🤫 **Confesión Anónima:** ${t}`);
-  }
-
-  // --- CONTROL (Stopwatch/Media) ---
-  if (cmd === 'start') return msg.reply("⏱️ Cronómetro en marcha.");
-  if (cmd === 'pause') return msg.reply("⏸️ Pausado... Tomate un respiro.");
-  if (cmd === 'resume') return msg.reply("▶️ Seguimos con el bardo.");
-  if (cmd === 'stop') return msg.reply("🛑 Paramos acá.");
-  if (cmd === 'reset') return msg.reply("🔄 Todo de cero.");
-
-  // --- ADMIN ---
   if (cmd === 'importar' && msg.author.id === '986680845031059526') {
-    const ext = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
-    await dataColl.updateOne({ id: "main_config" }, { $set: { extras: ext } }, { upsert: true });
-    return msg.reply("✅ Extras importados a MongoDB.");
+    try {
+      const ext = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
+      await dataColl.updateOne({ id: "main_config" }, { $set: { extras: ext } }, { upsert: true });
+      await loadConfig();
+      return msg.reply("✅ Extras importados y cache refrescado.");
+    } catch (e) { return msg.reply("❌ Error leyendo extras.json"); }
   }
 });
 
 // REVIVIDOR
 setInterval(async () => {
   if (!lastChannelId || Date.now() - lastMsgTime < 300000) return;
-  const config = await getFullConfig();
   const c = client.channels.cache.get(lastChannelId);
-  if (c && config.phrases.length > 0) c.send(config.phrases[Math.floor(Math.random()*config.phrases.length)]);
+  if (c && cachedConfig.phrases.length > 0) {
+    c.send(cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
+  }
 }, 300000);
 
 client.login(process.env.TOKEN);
