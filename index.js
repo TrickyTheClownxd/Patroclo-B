@@ -7,20 +7,19 @@ import axios from 'axios';
 
 dotenv.config();
 
-http.createServer((req, res) => { res.write("Patroclo-B B01 MASTER ONLINE"); res.end(); }).listen(process.env.PORT || 8080);
+http.createServer((req, res) => { res.write("Patroclo-B B01 OBLIGATORIO ONLINE"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
   partials: [Partials.Channel]
 });
 
-// --- CONFIGURACIÓN MONGODB ---
+// --- CONFIGURACIÓN ---
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
 let lastChannelId = null, lastMsgTime = Date.now();
 let cachedConfig = { phrases: [], extras: {} };
 
-// CONFIGURACIÓN DE IDS (Reemplazá con las tuyas)
 const ID_PATROCLO_ORIGINAL = 'TU_ID_AQUÍ'; 
 const MI_ID_BOSS = 'TU_ID_AQUÍ';
 
@@ -30,7 +29,7 @@ async function connectDb() {
     const database = mongoClient.db('patroclo_bot');
     usersColl = database.collection('users');
     dataColl = database.collection('bot_data');
-    console.log("✅ Sistema Full Conectado (Mongo + Timba)");
+    console.log("✅ Sistema Full ADN Conectado");
     await loadConfig(true);
   } catch (e) { await loadConfig(false); }
 }
@@ -59,13 +58,13 @@ async function getUser(id) {
 }
 
 client.on('messageCreate', async (msg) => {
-  // FILTRO DE BOTS: Solo permite usuarios humanos Y al Patroclo Original
+  // Multiverso: Permite que el Original tire comandos
   if (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL) return;
 
   lastChannelId = msg.channel.id; lastMsgTime = Date.now();
   const content = msg.content.toLowerCase();
 
-  // 1. APRENDIZAJE ADN (Solo humanos)
+  // 1. APRENDIZAJE ADN (Filtro 2-200 carac, no links)
   if (!msg.author.bot && dataColl && !content.startsWith('!') && !content.includes("http") && msg.content.length > 2 && msg.content.length < 200) {
     if (!cachedConfig.phrases.includes(msg.content)) {
       await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
@@ -73,7 +72,7 @@ client.on('messageCreate', async (msg) => {
     }
   }
 
-  // 2. RESPUESTAS AUTOMÁTICAS
+  // 2. RESPUESTAS AUTOMÁTICAS (Nombre/Mención/15% azar)
   if ((content.includes("patroclo") || content.includes("patroclin") || msg.mentions.has(client.user.id) || Math.random() < 0.15) && !content.startsWith('!')) {
     const r = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)];
     return msg.channel.send(r || "Qué onda facha?");
@@ -83,69 +82,71 @@ client.on('messageCreate', async (msg) => {
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // --- MÍSTICA, SOCIAL E INVOCACIÓN ---
+  // --- COMANDOS MÍSTICA Y ESPACIO ---
+  if (cmd === 'universefacts') {
+    try {
+      const uniData = JSON.parse(fs.readFileSync('./universe.json', 'utf8'));
+      const extraData = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
+      let pool = [...uniData.facts];
+      if (extraData.universe_bonus) pool.push(...extraData.universe_bonus);
+      return msg.reply(`🌌 **UNIVERSE:** ${pool[Math.floor(Math.random() * pool.length)]}`);
+    } catch (e) { return msg.reply("Error de lectura estelar."); }
+  }
+
   if (cmd === 'bola8') {
-    const r = ["Sí, olvidate.", "Ni en pedo.", "Puede ser, facha.", "Preguntale a tu vieja.", "D1.", "Respetá la complexión de la cara."];
+    const r = ["Sí.", "No.", "D1.", "Preguntale a tu vieja.", "Respetá la complexión de la cara."];
     return msg.reply(`🎱 **BOLA 8:** ${r[Math.floor(Math.random() * r.length)]}`);
   }
 
-  if (cmd === 'nekoask') {
-    const duda = args.join(' '); if (!duda) return msg.reply("¿Qué le preguntás a la gata?");
-    return msg.channel.send(`!ask ${duda}`);
-  }
+  if (cmd === 'nekoask') return msg.channel.send(`!ask ${args.join(' ')}`);
 
   if (cmd === 'horoscopo') {
-    const p = ["✨ Materia Oscura: Tu futuro está negro.", "✨ Satélite Viejo: Girás al pedo.", "✨ Cometa Fugaz: Pasaste por la pala y seguiste."];
-    return msg.reply(p[Math.floor(Math.random() * p.length)]);
+    const h = ["Materia Oscura: Estás domado.", "Satélite Viejo: Girás al pedo.", "Nebulosa: No se ve nada."];
+    return msg.reply(`✨ ${h[Math.floor(Math.random() * h.length)]}`);
   }
 
-  if (cmd === 'spoty') {
-    const s = ["🔥 Reggaeton: http://spotify.com/track/1", "🛰️ Dato: En el espacio nadie escucha tus gritos.", "🔥 Perreo: http://spotify.com/track/2"];
-    return msg.reply(s[Math.floor(Math.random() * s.length)]);
-  }
-
-  if (cmd === 'bardo') {
-    const insultos = ["Fantasma", "Seco", "Cara de vereda", "Domado", "Cajetilla"];
-    return msg.reply(insultos[Math.floor(Math.random() * insultos.length)]);
-  }
-
-  if (cmd === 'gif' || cmd === 'foto') {
-    const query = args.join(' ') || 'meme';
-    const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${query}&limit=1&rating=g`);
-    return msg.reply(res.data.data[0]?.url || "No encontré nada.");
-  }
-
-  if (cmd === 'confesion') {
-    const t = args.join(' '); if (!t) return;
-    await msg.delete(); return msg.channel.send(`🤫 **CONFESIÓN ANÓNIMA:** "${t}"`);
-  }
-
-  // --- TIMBA V45.0 ---
+  // --- TIMBA ---
   const user = await getUser(msg.author.id);
   if (!user) return;
 
   if (cmd === 'daily') {
-    if (Date.now() - user.lastDaily < 86400000) return msg.reply("Ya cobraste, manguero.");
+    if (Date.now() - user.lastDaily < 86400000) return msg.reply("Seco, ya cobraste.");
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 300 }, $set: { lastDaily: Date.now() } });
-    return msg.reply("💵 Cobraste tus **300 Patro-Pesos**.");
+    return msg.reply("💵 Tomá tus **300 Patro-Pesos**.");
   }
-
-  if (cmd === 'bal' || cmd === 'perfil') return msg.reply(`💰 Tenés **${user.points} Patro-Pesos**.`);
 
   if (cmd === 'suerte' || cmd === 'ruleta') {
     const bet = parseInt(args[0]);
-    if (isNaN(bet) || bet > user.points) return msg.reply("Apostá lo que tengas, seco.");
+    if (isNaN(bet) || bet > user.points) return msg.reply("No tenés esa plata.");
     const gano = Math.random() < 0.5;
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gano ? bet : -bet } });
-    return msg.reply(gano ? `🔥 ¡GANASTE! +${bet}` : `💀 AL LOBBY. Perdiste ${bet}`);
+    return msg.reply(gano ? `🔥 ¡GANASTE! +${bet}` : `💀 AL LOBBY. -${bet}`);
   }
 
-  // --- CONTROL ---
-  if (cmd === 'stats') return msg.reply(`📊 **STATS:** DB: ${dataColl ? '✅' : '❌'} | Frases: ${cachedConfig.phrases.length}`);
+  // --- SISTEMA Y STATS ---
+  if (cmd === 'stats') {
+    const f = cachedConfig.phrases;
+    const emojis = f.filter(p => /<a?:\w+:\d+>/.test(p)).length;
+    const gifs = f.filter(p => p.includes("giphy") || p.includes("tenor")).length;
+    const stickers = f.filter(p => p.includes("sticker:")).length;
+    return msg.reply(`📊 **PATRO-STATS:**\n🧠 Memoria: ${f.length}\n✨ Emojis: ${emojis}\n🖼️ GIFs: ${gifs}\n🎫 Stickers: ${stickers}\n✅ DB: ONLINE`);
+  }
+
+  if (cmd === 'ayudacmd') {
+    return msg.reply("📜 **BIBLIA B01:** !daily, !bal, !suerte, !ruleta, !bola8, !nekoask, !universefacts, !horoscopo, !spoty, !gif, !bardo, !confesion, !stats, !reload");
+  }
+
+  if (cmd === 'reload') { await loadConfig(!!dataColl); return msg.reply("♻️ Memoria refrescada."); }
+
   if (cmd === 'reloadjson' && msg.author.id === MI_ID_BOSS) {
     const local = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
     await dataColl.updateOne({ id: "main_config" }, { $set: { phrases: local.phrases } }, { upsert: true });
-    await loadConfig(true); return msg.reply("♻️ ADN Sincronizado.");
+    await loadConfig(true); return msg.reply("♻️ JSON cargado a la DB.");
+  }
+
+  if (cmd === 'gif' || cmd === 'foto') {
+    const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ') || 'meme'}&limit=1&rating=g`);
+    return msg.reply(res.data.data[0]?.url || "Nada, facha.");
   }
 });
 
