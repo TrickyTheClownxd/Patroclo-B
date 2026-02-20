@@ -81,9 +81,12 @@ client.on('messageCreate', async (msg) => {
     }
   }
 
-  // 3. RESPUESTAS POR MENCIÓN
-  if (msg.mentions.has(client.user) || content.includes("patroclo")) {
-    const rando = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)] || "Qué onda gato.";
+  // 3. RESPUESTAS POR MENCIÓN, APODO O REPLY
+  const isReplyToBot = msg.reference && (await msg.channel.messages.fetch(msg.reference.messageId)).author.id === client.user.id;
+  const namingBot = content.includes("patroclo") || content.includes("patroclin");
+
+  if (msg.mentions.has(client.user) || namingBot || isReplyToBot) {
+    const rando = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)] || "Qué onda gato, me buscabas?";
     return msg.reply(rando);
   }
 
@@ -106,7 +109,7 @@ client.on('messageCreate', async (msg) => {
 !stats, !reload (DB), !reloadjson (Archivo), !start, !pause, !resume, !stop
 
 **🧠 ADN:**
-Aprendo de lo que dicen y agito el chat cada 5 min.`;
+Respondo a menciones, apodos (Patroclin) y replies. Hablo solo cada 5 min.`;
     return msg.reply(manual);
   }
 
@@ -129,7 +132,7 @@ Aprendo de lo que dicen y agito el chat cada 5 min.`;
   // --- TIMBA V45.0 ---
   if (cmd === 'daily') {
     const now = Date.now();
-    if (now - user.lastDaily < 86400000) return msg.reply("❌ Mañana volvé.");
+    if (now - user.lastDaily < 86400000) return msg.reply("❌ Volvé mañana.");
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 300 }, $set: { lastDaily: now } });
     return msg.reply("🎁 +300 Patro-Pesos.");
   }
@@ -178,6 +181,13 @@ Aprendo de lo que dicen y agito el chat cada 5 min.`;
   if (cmd === 'universefacts') {
     const f = cachedConfig.extras.spaceDataBackup || ["El espacio es enorme."];
     return msg.reply(`🌌 ${f[Math.floor(Math.random()*f.length)]}`);
+  }
+
+  if (cmd === 'spoty') {
+    const facts = cachedConfig.extras.spaceDataBackup || ["El espacio es enorme."];
+    return Math.random() > 0.5 
+      ? msg.reply("🎧 **Sonando:** Reggaeton Viejo 🔥 (Dale mecha)") 
+      : msg.reply(`🌌 **Dato Espacial:** ${facts[Math.floor(Math.random()*facts.length)]}`);
   }
 
   if (cmd === 'bardo') {
