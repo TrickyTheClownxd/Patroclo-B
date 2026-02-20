@@ -1,14 +1,16 @@
 {
-  "name": "patroclo-b",
-  "version": "17.5.0",
-  "type": "module",
+  "name": "patroclo-b-beta-b01",
+  "version": "1.1.0",
+  "description": "Patroclo-B Fase B01 - Beta Estelar",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "dotenv": "^16.4.1",
-    "mongoose": "^8.1.1"
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.2.0",
+    "node-fetch": "^3.3.2"
   }
 }
