@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 
 dotenv.config();
 
-// --- MODELO MONGOOSE ---
+// --- MODELO MONGOOSE (Memoria en la Nube) ---
 const MemorySchema = new mongoose.Schema({
   id: { type: String, default: "global_memory" },
   phrases: [String],
@@ -17,8 +17,8 @@ const MemorySchema = new mongoose.Schema({
 });
 const MemoryModel = mongoose.model('Memory', MemorySchema);
 
-// Server para Render/Railway
-http.createServer((req, res) => { res.write("Patroclo-B V31.0 Online"); res.end(); }).listen(process.env.PORT || 8080);
+// Server para Render/Railway/Render
+http.createServer((req, res) => { res.write("Patroclo-B V32.0 Online"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
@@ -26,7 +26,7 @@ const client = new Client({
 
 const FILES = { memory: './memory.json', extras: './extras.json', universe: './universe.json' };
 
-// Función de validación (Tu guía original)
+// Validación de JSON (Anti-error de comas)
 function validateJSON(filePath, defaultData) {
   try {
     if (!fs.existsSync(filePath)) {
@@ -38,7 +38,6 @@ function validateJSON(filePath, defaultData) {
   } catch (error) { return defaultData; }
 }
 
-// Carga inicial
 let memory = validateJSON(FILES.memory, { words: {}, phrases: [], emojis: [] });
 let extras = validateJSON(FILES.extras, { emojis: [], customEmojis: [], stickers: [], spaceData: [] });
 let universe = validateJSON(FILES.universe, { facts: [], usedToday: [] });
@@ -48,12 +47,12 @@ let lastMessageTime = Date.now();
 
 const saveFile = (path, data) => fs.writeFileSync(path, JSON.stringify(data, null, 2));
 
-// --- CONEXIÓN DB ---
+// --- CONEXIÓN Y SINCRONIZACIÓN ---
 const connectDB = async () => {
-  if (!process.env.MONGO_URI) return;
+  if (!process.env.MONGO_URI) return console.log("⚠️ Falta MONGO_URI");
   try {
     await mongoose.connect(process.env.MONGO_URI);
-    console.log("🌐 Atlas Conectado");
+    console.log("🌐 Conectado a MongoDB Atlas");
     const data = await MemoryModel.findOne({ id: "global_memory" });
     if (data) {
       memory.phrases = [...new Set([...memory.phrases, ...data.phrases])];
@@ -74,7 +73,7 @@ const syncCloud = async () => {
 };
 
 client.on('ready', () => {
-  console.log(`✅ Patroclo-B Online.`);
+  console.log(`✅ Patroclo-B Online. Memoria: ${memory.phrases.length} frases.`);
   connectDB();
   client.guilds.cache.forEach(g => {
     const ch = g.channels.cache.find(c => c.type === ChannelType.GuildText && c.permissionsFor(client.user).has('SendMessages'));
@@ -88,7 +87,7 @@ client.on('messageCreate', async (message) => {
   lastMessageTime = Date.now();
   const content = message.content.toLowerCase();
 
-  // --- APRENDIZAJE ---
+  // --- APRENDIZAJE (Manual de la Madrugada) ---
   if (!content.startsWith('!') && !isPaused) {
     let changed = false;
     if (message.stickers.size > 0) {
@@ -124,52 +123,52 @@ client.on('messageCreate', async (message) => {
     const args = message.content.slice(1).split(/\s+/);
     const cmd = args.shift().toLowerCase();
 
-    if (cmd === 'stats') return message.reply(`📊 DB: ${mongoose.connection.readyState === 1 ? "ON" : "OFF"} | Memoria: ${memory.phrases.length} frases | Stickers: ${extras.stickers.length}`);
-    if (cmd === 'pausa') { isPaused = true; return message.reply("Me fui a dormir."); }
-    if (cmd === 'reanudar') { isPaused = false; return message.reply("Ya llegué perritas 🔥"); }
-    if (cmd === 'bardo') return message.reply(["Fantasma", "Bobo", "Andá a lavar los platos"][Math.floor(Math.random() * 3)]);
-    
-    // --- NUEVO: NEKOASK ---
-    if (cmd === 'nekoask') {
-      const respuestas = ["Sí, obvio.", "No, ni ahí.", "Puede ser...", "Preguntame mañana.", "Lo dudo mucho, fantasma."];
-      return message.reply(`🐱 **Neko dice:** ${respuestas[Math.floor(Math.random() * respuestas.length)]}`);
+    if (cmd === 'ayuda' || cmd === 'help') {
+      return message.channel.send("📜 **COMANDOS DE PATROCLO:**\n`!suerte`, `!bola8`, `!nekoask [p]`, `!confesion [t]`, `!spoty`, `!bardo`, `!universefacts`, `!stats`, `!pausa`, `!reanudar`, `!reload`, `!reloadjson`, `!horoscopo`.");
     }
 
-    if (cmd === 'suerte' || cmd === 'bola8') {
-      return message.reply(`🎱 ${memory.phrases[Math.floor(Math.random() * memory.phrases.length)] || "Ni idea."}`);
+    if (cmd === 'horoscopo') {
+      const signos = ["Satélite Viejo", "Nebulosa de Birra", "Asteroide con Ansiedad", "Supernova de Bardo", "Enana Blanca Resacosa", "Hoyo Negro Fiscal"];
+      const s = signos[Math.floor(Math.random() * signos.length)];
+      const p = memory.phrases[Math.floor(Math.random() * memory.phrases.length)] || "Día fantasma.";
+      return message.reply(`✨ **HORÓSCOPO DISOCIADO** ✨\n\n🪐 **Signo:** ${s}\n🔮 **Predicción:** "${p}"\n\n*El universo no miente, Tricky.*`);
     }
+
+    if (cmd === 'nekoask') {
+      const gato = ["Miau (Sí)", "Fush (No)", "Prrr (Puede ser)", "Miau rancio (Ni ahí)"];
+      return message.reply(`🐱 **Neko dice:** ${gato[Math.floor(Math.random() * gato.length)]}`);
+    }
+
+    if (cmd === 'bardo') return message.reply(["Fantasma", "Bobo", "Cerrá el orto, Tricky", "Andá a lavar los platos"][Math.floor(Math.random() * 4)]);
+
+    if (cmd === 'stats') return message.reply(`📊 Atlas: ${mongoose.connection.readyState === 1 ? "ON" : "OFF"} | Memoria: ${memory.phrases.length} | Stickers: ${extras.stickers.length}`);
 
     if (cmd === 'confesion') {
-      const texto = args.join(" ");
-      if (texto) {
-        memory.phrases.push(`[CONFESIÓN]: ${texto}`);
+      const t = args.join(" ");
+      if (t) {
+        memory.phrases.push(`[CONFESIÓN]: ${t}`);
         try { await message.delete(); } catch(e){}
-        syncCloud(); return message.channel.send("🤫 Secreto guardado.");
+        syncCloud(); return message.channel.send("🤫 Secreto guardado en la oscuridad.");
       } else {
         const confs = memory.phrases.filter(p => p.includes("[CONFESIÓN]"));
-        const p = (confs.length ? confs : memory.phrases)[Math.floor(Math.random() * (confs.length || memory.phrases.length))];
-        return message.reply(`🤫 **Confesión:** ${p.replace("[CONFESIÓN]: ", "")}`);
+        const sel = (confs.length ? confs : memory.phrases)[Math.floor(Math.random() * (confs.length || memory.phrases.length))];
+        return message.reply(`🤫 **Confesión:** ${sel.replace("[CONFESIÓN]: ", "")}`);
       }
     }
 
     if (cmd === 'universo' || cmd === 'universefacts') {
-      let avail = universe.facts.filter(f => !universe.usedToday.includes(f));
-      if (avail.length === 0) return message.reply("🌌 **Bonus Tarántula:** Wolf-Rayet son las estrellas más picantes.");
-      const sel = avail[Math.floor(Math.random() * avail.length)];
-      universe.usedToday.push(sel); saveFile(FILES.universe, universe);
-      return message.reply(sel);
+      let av = universe.facts.filter(f => !universe.usedToday.includes(f));
+      if (!av.length) return message.reply("🌌 **Bonus Tarántula:** En 30 Doradus viven las estrellas Wolf-Rayet más calientes!");
+      const s = av[Math.floor(Math.random() * av.length)];
+      universe.usedToday.push(s); saveFile(FILES.universe, universe);
+      return message.reply(s);
     }
 
-    if (cmd === 'spoty') {
-      if (Math.random() > 0.5) return message.reply("🎶 http://spotify.com/...");
-      return message.reply(`🌌 ${extras.spaceData[Math.floor(Math.random() * extras.spaceData.length)]}`);
-    }
-
+    if (cmd === 'pausa') { isPaused = true; return message.reply("Me fui a dormir."); }
+    if (cmd === 'reanudar') { isPaused = false; return message.reply("Ya llegué perritas 🔥"); }
     if (cmd === 'reload' || cmd === 'reloadjson') {
-      memory = validateJSON(FILES.memory, memory);
-      extras = validateJSON(FILES.extras, extras);
-      universe = validateJSON(FILES.universe, universe);
-      return message.reply("♻️ Memoria refrescada.");
+       memory = validateJSON(FILES.memory, memory);
+       return message.reply("♻️ Memoria refrescada.");
     }
   }
 
@@ -179,13 +178,13 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// --- REVIVIDOR 5 MIN ---
+// --- REVIVIDOR (5 MIN) ---
 setInterval(() => {
   if (isPaused || !lastChannelId || Date.now() - lastMessageTime < 300000) return;
   const channel = client.channels.cache.get(lastChannelId);
   if (channel) {
-    const res = Math.random() > 0.5 ? (universe.facts[Math.floor(Math.random() * universe.facts.length)]) : (memory.phrases[Math.floor(Math.random() * memory.phrases.length)]);
-    if (res) channel.send(res).catch(() => {});
+    const r = Math.random() > 0.5 ? (universe.facts[Math.floor(Math.random() * universe.facts.length)]) : (memory.phrases[Math.floor(Math.random() * memory.phrases.length)]);
+    if (r) channel.send(r).catch(() => {});
     lastMessageTime = Date.now();
   }
 }, 60000);
