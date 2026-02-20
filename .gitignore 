@@ -1,4 +1,2 @@
 node_modules
 .env
-memory.json
-extras.json
