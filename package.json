@@ -1,7 +1,7 @@
 {
   "name": "patroclo-b-b01",
   "version": "1.0.0",
-  "description": "Bot Patroclo-B Fase B01 - Full ADN, Universe y Timba",
+  "description": "Bot Patroclo-B Fase B01 - Full ADN y Universe",
   "main": "index.js",
   "type": "module",
   "scripts": {
