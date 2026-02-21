@@ -7,6 +7,9 @@
   "scripts": {
     "start": "node index.js"
   },
+  "engines": {
+    "node": ">=18.x"
+  },
   "dependencies": {
     "discord.js": "^14.14.1",
     "mongodb": "^6.3.0",
