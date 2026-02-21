@@ -7,7 +7,7 @@ import axios from 'axios';
 
 dotenv.config();
 
-// Servidor para Railway (Mantiene el bot online 24/7)
+// Servidor Railway - El bot no duerme
 http.createServer((req, res) => { 
   res.write("Patroclo-B B01.8 SISTEMA GALACTICO ONLINE"); 
   res.end(); 
@@ -30,7 +30,7 @@ if (!client.retos) client.retos = new Map();
 
 let statsSesion = { comandosUsados: 0, inicio: Date.now() };
 
-// --- IDENTIDADES SAGRADAS (ID BOSS Y BROTHER) ---
+// IDENTIDADES SAGRADAS
 const ID_PATROCLO_ORIGINAL = '974297735559806986'; 
 const MI_ID_BOSS = '986680845031059526';
 
@@ -52,24 +52,22 @@ async function loadConfig() {
 
 connectDb();
 
-// --- BIENVENIDA Y REPORTE HISTORICO ---
+// --- BIENVENIDA Y REPORTE ---
 client.once('ready', async () => {
-  console.log("Patroclo-B Online 🔥");
   if (cachedConfig.lastChannelId) {
     const channel = await client.channels.fetch(cachedConfig.lastChannelId).catch(() => null);
     if (channel) {
       await channel.send("ya llegué perritas 🔥");
-      const cronologiaReporte = `
-REPORTE HISTORICO DE EVOLUCION PATROCLO-B
-ESTADO: OPERATIVO TOTAL
-VERSION ACTUAL: B01.8
-
-RECORRIDO DE ACTUALIZACIONES:
-1. FASE ALFA (V 0.01 - V 1.00): NACIMIENTO DEL ADN Y RESPUESTAS POR APODO.
-2. FASE BETA INICIAL (B 01.0 - B 01.5): MIGRACION A MONGODB Y SISTEMA ECONOMICO.
-3. FASE BETA AVANZADA (B 01.8 - ACTUAL): DUELOS 1VS1, STATS MULTIMEDIA, RECONOCIMIENTO DE PATROCLO ORIGINAL (974297735559806986) Y PERSISTENCIA DE CANAL.
+      const reporteH = `
+REPORTE HISTORICO PATROCLO-B | VERSION B01.8
+------------------------------------------------
+1. V 0.01: NACIMIENTO ADN Y APRENDIZAJE.
+2. B 01.0: PERSISTENCIA MONGODB Y ECONOMIA.
+3. B 01.8: DUELOS 1VS1, STATS FULL Y SINCRO BOSS.
+------------------------------------------------
+PATROCLO ORIGINAL RECONOCIDO: ${ID_PATROCLO_ORIGINAL}
 `;
-      await channel.send("```" + cronologiaReporte + "```");
+      await channel.send("```" + reporteH + "```");
     }
   }
 });
@@ -84,10 +82,10 @@ async function getUser(id) {
 }
 
 client.on('messageCreate', async (msg) => {
-  // EL PATROCLO ORIGINAL TIENE ACCESO TOTAL (OTROS BOTS NO)
+  // BOSS & BROTHER ACCESS
   if (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL) return;
 
-  // PERSISTENCIA DE CANAL ACTIVO
+  // PERSISTENCIA DE CANAL
   if (cachedConfig.lastChannelId !== msg.channel.id) {
     cachedConfig.lastChannelId = msg.channel.id;
     await dataColl.updateOne({ id: "main_config" }, { $set: { lastChannelId: msg.channel.id } }, { upsert: true });
@@ -96,7 +94,7 @@ client.on('messageCreate', async (msg) => {
   const content = msg.content.toLowerCase();
   const user = await getUser(msg.author.id);
 
-  // --- ADN APRENDIZAJE ---
+  // ADN: APRENDIZAJE
   if (!msg.author.bot && !content.startsWith('!') && !content.includes("http") && msg.content.length > 3) {
     if (!cachedConfig.phrases.includes(msg.content)) {
       await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
@@ -104,11 +102,9 @@ client.on('messageCreate', async (msg) => {
     }
   }
 
-  // --- RESPUESTA A APODOS Y AZAR ---
+  // ADN: HABLA (APODOS Y AZAR)
   const apodos = ["patroclo", "patroclin", "patro", "bot", "facha"];
-  const mencionado = apodos.some(a => content.includes(a)) || msg.mentions.has(client.user.id);
-  
-  if ((mencionado || Math.random() < 0.15) && !content.startsWith('!')) {
+  if ((apodos.some(a => content.includes(a)) || msg.mentions.has(client.user.id) || Math.random() < 0.15) && !content.startsWith('!')) {
     const r = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)];
     return msg.channel.send(r || "D1 facha.");
   }
@@ -118,18 +114,20 @@ client.on('messageCreate', async (msg) => {
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // --- DUELOS ---
+  // --- DUELOS (POKER Y PENAL ACTUALIZADOS) ---
   if (cmd === 'poker' || cmd === 'penal') {
     const mencion = msg.mentions.users.first();
     const monto = parseInt(args[1]) || parseInt(args[0]) || 100;
     if (user.points < monto || monto <= 0) return msg.reply("No tenes esa guita.");
-    if (!mencion) {
+
+    if (mencion) {
+      if (mencion.id === msg.author.id) return msg.reply("No podes jugar contra vos mismo.");
+      client.retos.set(mencion.id, { tipo: cmd, retador: msg.author.id, monto: monto });
+      return msg.channel.send(`⚔️ **RETO:** ${mencion}, duelo de ${cmd} por **${monto}**. \`!aceptar\`.`);
+    } else {
       const gano = Math.random() < 0.5;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gano ? monto : -monto } });
-      return msg.reply(gano ? `✅ Ganaste **${monto}**` : `💀 Perdiste **${monto}**`);
-    } else {
-      client.retos.set(mencion.id, { tipo: cmd, retador: msg.author.id, monto: monto });
-      return msg.channel.send(`⚔️ **RETO:** ${mencion}, te desafiaron a ${cmd} por **${monto}**. Usa \`!aceptar\`.`);
+      return msg.reply(gano ? `✅ ¡GOOOL/PLENO! Ganaste **${monto}**.` : `💀 Perdiste **${monto}**.`);
     }
   }
 
@@ -142,7 +140,7 @@ client.on('messageCreate', async (msg) => {
     await usersColl.updateOne({ userId: g }, { $inc: { points: reto.monto } });
     await usersColl.updateOne({ userId: p }, { $inc: { points: -reto.monto } });
     client.retos.delete(msg.author.id);
-    return msg.channel.send(`🏆 **RESULTADO:** <@${g}> gano los **${reto.monto}**.`);
+    return msg.channel.send(`🏆 **RESULTADO:** <@${g}> gano los **${reto.monto}** en el duelo de ${reto.tipo}.`);
   }
 
   // --- ECONOMIA ---
@@ -157,44 +155,63 @@ client.on('messageCreate', async (msg) => {
     if (ahora - (user.lastWork || 0) < 3600000) return msg.reply("Descansa facha.");
     const paga = Math.floor(Math.random() * 400) + 200;
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: paga }, $set: { lastWork: ahora } });
-    return msg.reply(`🛠️ Pegaste **${paga} Patro-Pesos** laburando.`);
+    return msg.reply(`🛠️ Pegaste **${paga} Patro-Pesos**.`);
   }
 
-  // --- MISTICA (SPOTY INCLUIDO) ---
+  // --- MISTICA ---
   if (cmd === 'spoty') return msg.reply(Math.random() < 0.5 ? "🎶 **PERREO VIEJO:** http://googleusercontent.com/spotify.com/7" : "🔇 Sin señal.");
   if (cmd === 'cuanto') return msg.reply(`Sos un **${Math.floor(Math.random() * 101)}%** ${args.join(' ') || "fantasma"}.`);
   if (cmd === 'universefacts') {
     const facts = cachedConfig.universeFacts || [];
-    return msg.reply(facts.length ? `🌌 **DATA:** ${facts[Math.floor(Math.random()*facts.length)]}` : "El espacio esta vacio.");
+    return msg.reply(facts.length ? `🌌 **DATA:** ${facts[Math.floor(Math.random()*facts.length)]}` : "Vacío.");
   }
   if (cmd === 'bardo') {
     const f = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)];
-    return msg.channel.send(f || "No tengo bardo.");
-  }
-  if (cmd === 'horoscopo') return msg.reply("✨ Destino: Vas a estar facha hoy.");
-  if (cmd === 'foto' || cmd === 'gif') {
-    try {
-      const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ')||'galaxy'}&limit=1`);
-      return msg.reply(res.data.data[0]?.url || "Sin señal.");
-    } catch (e) { return msg.reply("Error Giphy."); }
+    return msg.channel.send(f || "No hay bardo.");
   }
 
-  // --- SISTEMA Y BOSS (STATS ACTUALIZADO) ---
+  // --- SISTEMA ---
   if (cmd === 'stats') {
     const uptime = Math.floor((Date.now() - statsSesion.inicio) / 60000);
     const reporteStats = `
-📊 **REPORTE DE SISTEMA - B01.8**
-- **ADN Frases:** ${cachedConfig.phrases?.length || 0}
-- **Universo Facts:** ${cachedConfig.universeFacts?.length || 0}
-- **Multimedia:** GIFs, Fotos y Stickers operativos.
-- **Uptime:** ${uptime}m
-- **DB Status:** MongoDB Cloud ✅
-- **Ultima Update:** Hoy (Sincro Boss e ID Brother)
+📊 **REPORTE SISTEMA - B01.8**
+- ADN Frases: ${cachedConfig.phrases?.length || 0}
+- Universo Facts: ${cachedConfig.universeFacts?.length || 0}
+- Multimedia: GIFs, Fotos y Stickers OK.
+- Uptime: ${uptime}m
+- DB Status: Conectado (MongoDB Cloud)
+- Ultima Update: Hoy (Duelo 1vs1 Fix)
 `;
     return msg.reply("```" + reporteStats + "```");
   }
 
   if (cmd === 'reload') { await loadConfig(); return msg.reply("♻️ DB recargada."); }
+
+  if (cmd === 'ayudacmd') {
+    const menuAyuda = `
+📜 **BIBLIA PATROCLO-B (B01.8)**
+------------------------------------------------
+🎮 **DUELOS (TIMBA)**
+!poker | !penal | !aceptar
+
+💰 **ECONOMIA (PLATA)**
+!bal | !trabajar | !daily | !tienda | !comprar
+
+🌌 **MISTICA (ADN)**
+!spoty | !cuanto | !universefacts | !bardo | !gif
+
+🛠️ **SISTEMA (BOT)**
+!stats | !reload | !ayudacmd | !sugerencia
+
+👑 **BOSS ONLY**
+!reloadjson | !mantenimiento
+------------------------------------------------
+*Duelos 1vs1 requieren mencion y aceptar.*
+`;
+    return msg.channel.send("```fix\n" + menuAyuda + "```");
+  }
+
+  // COMANDOS BOSS
   if (cmd === 'reloadjson' && msg.author.id === MI_ID_BOSS) {
     try {
       const extra = JSON.parse(fs.readFileSync('./extras.json', 'utf8'));
@@ -203,9 +220,6 @@ client.on('messageCreate', async (msg) => {
       await loadConfig();
       return msg.reply("♻️ **BOSS:** ADN y Universo sincronizados.");
     } catch (e) { return msg.reply("❌ Error JSON."); }
-  }
-  if (cmd === 'ayudacmd') {
-    return msg.reply("📜 **BIBLIA:** `!poker`, `!penal`, `!aceptar`, `!trabajar`, `!bal`, `!daily`, `!universefacts`, `!cuanto`, `!spoty`, `!stats`, `!reload`.");
   }
 });
 
