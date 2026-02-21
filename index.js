@@ -7,7 +7,7 @@ import axios from 'axios';
 
 dotenv.config();
 
-// Servidor para Railway
+// Servidor para Railway (Mantiene el bot online 24/7)
 http.createServer((req, res) => { 
   res.write("Patroclo-B B01.8 SISTEMA GALACTICO ONLINE"); 
   res.end(); 
@@ -30,7 +30,7 @@ if (!client.retos) client.retos = new Map();
 
 let statsSesion = { comandosUsados: 0, inicio: Date.now() };
 
-// --- IDENTIDADES SAGRADAS ---
+// --- IDENTIDADES SAGRADAS (ID BOSS Y BROTHER) ---
 const ID_PATROCLO_ORIGINAL = '974297735559806986'; 
 const MI_ID_BOSS = '986680845031059526';
 
@@ -65,24 +65,9 @@ ESTADO: OPERATIVO TOTAL
 VERSION ACTUAL: B01.8
 
 RECORRIDO DE ACTUALIZACIONES:
-
-1. FASE ALFA (V 0.01 - V 1.00):
-- NACIMIENTO DEL MOTOR DE APRENDIZAJE ADN.
-- RESPUESTA AUTOMATICA A APODOS Y MENCIONES.
-- IMPLEMENTACION DE LA BASE DE DATOS DE FRASES LOCAL.
-
-2. FASE BETA INICIAL (B 01.0 - B 01.5):
-- MIGRACION ESTRUCTURAL A MONGODB PARA PERSISTENCIA.
-- LANZAMIENTO DEL SISTEMA ECONOMICO (PATRO-PESOS).
-- COMANDOS DE TRABAJO, BILLETERA Y BONO DIARIO.
-- INTEGRACION DE MULTIMEDIA (GIF, FOTO) Y MISTICA (HOROSCOPO).
-
-3. FASE BETA AVANZADA (B 01.8 - ACTUAL):
-- DESBLOQUEO DE DUELOS 1VS1 (POKER, PENAL) CON APUESTAS.
-- LECTURA DINAMICA DE UNIVERSE.JSON Y EXTRAS.JSON.
-- SISTEMA DE SINCRONIZACION BOSS (RELOADJSON, RELOAD).
-- RECONOCIMIENTO Y ACCESO TOTAL A PATROCLO ORIGINAL (974297735559806986).
-- COMANDOS CUANTO Y SPOTY REINTEGRADOS.
+1. FASE ALFA (V 0.01 - V 1.00): NACIMIENTO DEL ADN Y RESPUESTAS POR APODO.
+2. FASE BETA INICIAL (B 01.0 - B 01.5): MIGRACION A MONGODB Y SISTEMA ECONOMICO.
+3. FASE BETA AVANZADA (B 01.8 - ACTUAL): DUELOS 1VS1, STATS MULTIMEDIA, RECONOCIMIENTO DE PATROCLO ORIGINAL (974297735559806986) Y PERSISTENCIA DE CANAL.
 `;
       await channel.send("```" + cronologiaReporte + "```");
     }
@@ -99,10 +84,10 @@ async function getUser(id) {
 }
 
 client.on('messageCreate', async (msg) => {
-  // EL PATROCLO ORIGINAL TIENE ACCESO TOTAL (LOS DEMAS BOTS SE IGNORAN)
+  // EL PATROCLO ORIGINAL TIENE ACCESO TOTAL (OTROS BOTS NO)
   if (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL) return;
 
-  // PERSISTENCIA DE CANAL (PARA REAPARECER DONDE HUBO ACCION)
+  // PERSISTENCIA DE CANAL ACTIVO
   if (cachedConfig.lastChannelId !== msg.channel.id) {
     cachedConfig.lastChannelId = msg.channel.id;
     await dataColl.updateOne({ id: "main_config" }, { $set: { lastChannelId: msg.channel.id } }, { upsert: true });
@@ -111,7 +96,7 @@ client.on('messageCreate', async (msg) => {
   const content = msg.content.toLowerCase();
   const user = await getUser(msg.author.id);
 
-  // --- ADN: APRENDIZAJE ---
+  // --- ADN APRENDIZAJE ---
   if (!msg.author.bot && !content.startsWith('!') && !content.includes("http") && msg.content.length > 3) {
     if (!cachedConfig.phrases.includes(msg.content)) {
       await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
@@ -119,7 +104,7 @@ client.on('messageCreate', async (msg) => {
     }
   }
 
-  // --- ADN: HABLA (APODOS Y AZAR) ---
+  // --- RESPUESTA A APODOS Y AZAR ---
   const apodos = ["patroclo", "patroclin", "patro", "bot", "facha"];
   const mencionado = apodos.some(a => content.includes(a)) || msg.mentions.has(client.user.id);
   
@@ -133,7 +118,7 @@ client.on('messageCreate', async (msg) => {
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // --- DUELOS & TIMBA ---
+  // --- DUELOS ---
   if (cmd === 'poker' || cmd === 'penal') {
     const mencion = msg.mentions.users.first();
     const monto = parseInt(args[1]) || parseInt(args[0]) || 100;
@@ -163,7 +148,7 @@ client.on('messageCreate', async (msg) => {
   // --- ECONOMIA ---
   if (cmd === 'bal') return msg.reply(`💰 Billetera: **${user.points}**.`);
   if (cmd === 'daily') {
-    if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("Mañana volve.");
+    if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("Volve mañana.");
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 300 }, $set: { lastDaily: Date.now() } });
     return msg.reply("💵 +300 diarios.");
   }
@@ -172,11 +157,11 @@ client.on('messageCreate', async (msg) => {
     if (ahora - (user.lastWork || 0) < 3600000) return msg.reply("Descansa facha.");
     const paga = Math.floor(Math.random() * 400) + 200;
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: paga }, $set: { lastWork: ahora } });
-    return msg.reply(`🛠️ Laburaste y pegaste **${paga} Patro-Pesos**.`);
+    return msg.reply(`🛠️ Pegaste **${paga} Patro-Pesos** laburando.`);
   }
 
-  // --- MISTICA ---
-  if (cmd === 'spoty') return msg.reply(Math.random() < 0.5 ? "🎶 **PERREO VIEJO:** http://googleusercontent.com/spotify.com/7" : "🔇 Vacío.");
+  // --- MISTICA (SPOTY INCLUIDO) ---
+  if (cmd === 'spoty') return msg.reply(Math.random() < 0.5 ? "🎶 **PERREO VIEJO:** http://googleusercontent.com/spotify.com/7" : "🔇 Sin señal.");
   if (cmd === 'cuanto') return msg.reply(`Sos un **${Math.floor(Math.random() * 101)}%** ${args.join(' ') || "fantasma"}.`);
   if (cmd === 'universefacts') {
     const facts = cachedConfig.universeFacts || [];
@@ -186,7 +171,7 @@ client.on('messageCreate', async (msg) => {
     const f = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)];
     return msg.channel.send(f || "No tengo bardo.");
   }
-  if (cmd === 'horoscopo') return msg.reply("✨ Destino: Hoy vas a estar facha.");
+  if (cmd === 'horoscopo') return msg.reply("✨ Destino: Vas a estar facha hoy.");
   if (cmd === 'foto' || cmd === 'gif') {
     try {
       const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ')||'galaxy'}&limit=1`);
@@ -194,7 +179,21 @@ client.on('messageCreate', async (msg) => {
     } catch (e) { return msg.reply("Error Giphy."); }
   }
 
-  // --- SISTEMA & BOSS ---
+  // --- SISTEMA Y BOSS (STATS ACTUALIZADO) ---
+  if (cmd === 'stats') {
+    const uptime = Math.floor((Date.now() - statsSesion.inicio) / 60000);
+    const reporteStats = `
+📊 **REPORTE DE SISTEMA - B01.8**
+- **ADN Frases:** ${cachedConfig.phrases?.length || 0}
+- **Universo Facts:** ${cachedConfig.universeFacts?.length || 0}
+- **Multimedia:** GIFs, Fotos y Stickers operativos.
+- **Uptime:** ${uptime}m
+- **DB Status:** MongoDB Cloud ✅
+- **Ultima Update:** Hoy (Sincro Boss e ID Brother)
+`;
+    return msg.reply("```" + reporteStats + "```");
+  }
+
   if (cmd === 'reload') { await loadConfig(); return msg.reply("♻️ DB recargada."); }
   if (cmd === 'reloadjson' && msg.author.id === MI_ID_BOSS) {
     try {
@@ -205,12 +204,8 @@ client.on('messageCreate', async (msg) => {
       return msg.reply("♻️ **BOSS:** ADN y Universo sincronizados.");
     } catch (e) { return msg.reply("❌ Error JSON."); }
   }
-  if (cmd === 'stats') {
-    const uptime = Math.floor((Date.now() - statsSesion.inicio) / 60000);
-    return msg.reply(`📊 **REPORTE:** ADN: ${cachedConfig.phrases?.length} | Universo: ${cachedConfig.universeFacts?.length} | Uptime: ${uptime}m`);
-  }
   if (cmd === 'ayudacmd') {
-    return msg.reply("📜 **BIBLIA:** !poker, !penal, !aceptar, !trabajar, !bal, !daily, !universefacts, !cuanto, !spoty, !bardo, !gif, !stats, !reload");
+    return msg.reply("📜 **BIBLIA:** `!poker`, `!penal`, `!aceptar`, `!trabajar`, `!bal`, `!daily`, `!universefacts`, `!cuanto`, `!spoty`, `!stats`, `!reload`.");
   }
 });
 
