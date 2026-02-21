@@ -1,4 +1,17 @@
 {
+  "phrases": [
+    "D1 facha.",
+    "De una perri.",
+    "¿Qué onda ese agite?",
+    "Cortá un poco con el humo.",
+    "Facha nivel Dios.",
+    "El bot no duerme, descansa la vista."
+  ],
+  "facts": [
+    "El Sol es una estrella de tipo espectral G2V.",
+    "La Nebulosa de Orión es una región de formación estelar.",
+    "Júpiter tiene más de 79 lunas conocidas."
+  ],
   "emojis": ["🔥", "😎", "🧐", "🤌", "💰"],
   "customEmojis": [],
   "stickers": [],
@@ -8,10 +21,5 @@
   },
   "mensajes_especiales": {
     "bienvenida_vip": "¡Llegó el más facha del server! 😎"
-  },
-  "spaceDataBackup": [
-    "El Sol es una estrella de tipo espectral G2V.",
-    "La Nebulosa de Orión es una región de formación estelar.",
-    "Júpiter tiene más de 79 lunas conocidas."
-  ]
+  }
 }
