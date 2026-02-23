@@ -93,13 +93,11 @@ client.on('messageCreate', async (msg) => {
   const content = msg.content ? msg.content.toLowerCase() : "";
   const user = await getUser(msg.author.id);
 
-  // Guardar último canal activo
   if (msg.channel.id !== cachedConfig.lastChannelId && !msg.author.bot) {
     cachedConfig.lastChannelId = msg.channel.id;
     await dataColl.updateOne({ id: "main_config" }, { $set: { lastChannelId: msg.channel.id } }, { upsert: true }).catch(() => null);
   }
 
-  // --- HABLA AUTOMÁTICA Y ADN ---
   if (!msg.content.startsWith('!')) {
     if (!msg.author.bot && msg.content.length > 3 && !msg.content.includes('http')) {
       if (!cachedConfig.modoSerio && dataColl && !cachedConfig.phrases.includes(msg.content)) {
@@ -143,7 +141,7 @@ client.on('messageCreate', async (msg) => {
     } catch (e) { return msg.reply("❌ Error JSON."); }
   }
 
-  if (cmd === 'reload' && msg.author.id === MI_ID_BOSS) { await loadConfig(); return msg.reply("♻️ **Cache refrescada.**"); }
+  if (cmd === 'reload' && msg.author.id === MI_ID_BOSS) { await loadConfig(); return msg.reply("♻️ **Caché refrescada.**"); }
 
   // --- COMANDOS ECONOMÍA ---
   if (cmd === 'bal') return msg.reply(`💰 Saldo: **${user.points}** Patro-Pesos.`);
@@ -209,25 +207,45 @@ client.on('messageCreate', async (msg) => {
 
   if (cmd === 'suerte') return msg.reply(`🪙 **${Math.random() < 0.5 ? "CARA" : "CRUZ"}**`);
 
-  // --- COMANDOS MÍSTICA ---
+  // --- COMANDOS MÍSTICA / MULTIMEDIA ---
   if (cmd === 'nekoask') {
     const p = args.join(' ');
     return p ? msg.channel.send(`Nekoask ${p}`) : msg.reply("Preguntá algo.");
   }
   if (cmd === 'bola8') return msg.reply(`🎱 | ${["Sí.", "No.", "Quizás.", "Ni ahí."][Math.floor(Math.random()*4)]}`);
+  
+  if (cmd === 'horoscopo') {
+    const s = ["Aries", "Tauro", "Géminis", "Cáncer", "Leo", "Virgo", "Libra", "Escorpio", "Sagitario", "Capricornio", "Acuario", "Piscis"][Math.floor(Math.random()*12)];
+    const b = cachedConfig.phrases?.length > 0 ? cachedConfig.phrases : ["Bardo astral."];
+    return msg.reply(`🪐 **${s}:** "${b[Math.floor(Math.random()*b.length)]}"`);
+  }
+
   if (cmd === 'universefacts') return msg.reply(cachedConfig.universeFacts[Math.floor(Math.random()*cachedConfig.universeFacts.length)] || "El cosmos calla.");
   if (cmd === 'bardo') return msg.reply(cachedConfig.phrases[Math.floor(Math.random()*cachedConfig.phrases.length)] || "Sin bardo.");
   if (cmd === 'spoty') return msg.reply(`🎧 **Playlist:** ${["Techno Facha", "Bardo 2026", "Galactic Cachengue"][Math.floor(Math.random()*3)]}`);
+  
+  if (cmd === 'gif' || cmd === 'foto') {
+    try {
+      const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ')||'galaxy'}&limit=1`);
+      return msg.reply(res.data.data[0]?.url || "No encontré nada.");
+    } catch (e) { return msg.reply("Error API."); }
+  }
 
   // --- AYUDA Y STATS ---
+  if (cmd === 'sugerencias') {
+    const boss = await client.users.fetch(MI_ID_BOSS).catch(() => null);
+    if (boss) { boss.send(`💡 Sugerencia de ${msg.author.tag}: ${args.join(' ')}`); return msg.reply("✅ Enviada."); }
+  }
+
   if (cmd === 'stats') return msg.reply(`📊 ADN: ${cachedConfig.phrases.length} | Modo: ${cachedConfig.modoSerio ? 'SERIO' : 'NORMAL'}`);
+  
   if (cmd === 'ayudacmd') {
-    const e = new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO-B').setColor('#7D26CD')
+    const e = new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO-B B01.8.2').setColor('#7D26CD')
       .addFields(
         { name: '🎮 JUEGOS', value: '`!poker`, `!penal`, `!ruleta`, `!suerte`, `!aceptar`' },
-        { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!transferencia`, `!tienda`' },
-        { name: '🌌 MÍSTICA', value: '`!nekoask`, `!bola8`, `!universefacts`, `!bardo`' },
-        { name: '🛠️ SISTEMA', value: '`!personalidad`, `!stats`, `!mantenimiento`' }
+        { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!transferencia`, `!tienda`, `!comprar`' },
+        { name: '🌌 MÍSTICA', value: '`!nekoask`, `!bola8`, `!horoscopo`, `!universefacts`, `!bardo`, `!gif`, `!foto`' },
+        { name: '🛠️ SISTEMA', value: '`!personalidad`, `!stats`, `!mantenimiento`, `!sugerencias`' }
       ).setImage(IMG_PATROCLO_FUERTE);
     return msg.channel.send({ embeds: [e] });
   }
