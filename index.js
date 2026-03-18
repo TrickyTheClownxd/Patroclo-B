@@ -2,14 +2,13 @@ import { Client, GatewayIntentBits, Partials, EmbedBuilder } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import http from 'http';
 import dotenv from 'dotenv';
-import fs from 'fs';
 import axios from 'axios';
 
 dotenv.config();
 
-// Servidor para mantener el bot vivo
+// Servidor para Render/Railway
 http.createServer((req, res) => {
-    res.write("Patroclo-B B04.0 ONLINE - Motor IA & Doble Arte");
+    res.write("Patroclo-B B04.2 ONLINE - DNA Mirror Active");
     res.end();
 }).listen(process.env.PORT || 8080);
 
@@ -23,38 +22,24 @@ let usersColl, dataColl;
 
 let cachedConfig = {
     phrases: [],
-    universeFacts: ["Nogoyá es el eje del bardo.", "El Patroclo original vigila desde las sombras."],
-    phrasesSerias: [
-        "La disciplina es el puente entre las metas y los logros.",
-        "El respeto es la base de cualquier imperio.",
-        "En el silencio se encuentra la verdadera fuerza."
-    ],
-    lastChannelId: null,
+    phrasesSerias: ["La disciplina es libertad.", "Respeto ante todo.", "Fuerza en el silencio."],
     mantenimiento: false,
-    modoBot: "normal" // Modos: normal, serio, ia
+    modoBot: "normal" // normal, serio, ia
 };
-
-if (!client.retos) client.retos = new Map();
 
 const MI_ID_BOSS = '986680845031059526';
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
 const IMG_PATROCLO_FUERTE = 'https://i.ibb.co/XfXkXzV/patroclo-fuerte.jpg';
-
-const ITEMS_TIENDA = [
-    { id: 1, nombre: "Rango Facha", precio: 5000, desc: "Aparece en tu perfil." },
-    { id: 2, nombre: "Escudo Galactico", precio: 2500, desc: "Protección bardo." },
-    { id: 3, nombre: "VIP Pass", precio: 10000, desc: "Mística premium." }
-];
 
 // --- MOTORES IA Y ARTE ---
 async function respuestaIA(contexto) {
     try {
         const res = await axios.post(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API}`,
-            { contents: [{ parts: [{ text: contexto }] }] }, { timeout: 10000 }
+            { contents: [{ parts: [{ text: contexto }] }] }, { timeout: 12000 }
         );
         return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-    } catch (e) { return null; }
+    } catch { return null; }
 }
 
 async function generarImagen(prompt, modelUrl) {
@@ -67,7 +52,7 @@ async function generarImagen(prompt, modelUrl) {
     } catch { return null; }
 }
 
-// --- DB CONEXIÓN ---
+// --- CONEXIÓN DB ---
 async function connectDb() {
     try {
         await mongoClient.connect();
@@ -76,10 +61,12 @@ async function connectDb() {
         dataColl = database.collection('bot_data');
         const dbData = await dataColl.findOne({ id: "main_config" });
         if (dbData) { cachedConfig = { ...cachedConfig, ...dbData }; }
-        console.log("✅ Sistema Total Conectado (B04.0)");
+        console.log(`✅ B04.2 Conectado. Memoria: ${cachedConfig.phrases.length} frases.`);
     } catch (e) { console.log("❌ Error DB:", e); }
 }
 connectDb();
+
+let chatHistory = [];
 
 client.on('messageCreate', async (msg) => {
     if (!msg.author || (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL)) return;
@@ -88,109 +75,105 @@ client.on('messageCreate', async (msg) => {
 
     if (cachedConfig.mantenimiento && msg.author.id !== MI_ID_BOSS) return;
 
-    // --- APRENDIZAJE Y RESPUESTA AUTOMÁTICA ---
+    // --- 1. APRENDIZAJE Y RESPUESTAS ---
     if (!msg.content.startsWith('!')) {
-        if (!msg.author.bot && msg.content.length > 3 && !msg.content.includes('http')) {
+        // Aprender si no es comando y tiene longitud
+        if (!msg.author.bot && msg.content.length > 2 && !msg.content.includes('http')) {
             if (cachedConfig.modoBot !== "serio" && !cachedConfig.phrases.includes(msg.content)) {
                 await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
                 cachedConfig.phrases.push(msg.content);
             }
             
             const mencionado = content.includes("patroclo") || (msg.mentions && msg.mentions.has(client.user.id));
-            if (mencionado || Math.random() < 0.22) {
-                // MODO IA (Usa las 20k palabras para construir personalidad)
+            if (mencionado || Math.random() < 0.20) {
+                // --- MODO IA: El Cerebro ---
                 if (cachedConfig.modoBot === "ia") {
                     msg.channel.sendTyping();
-                    const muestra = cachedConfig.phrases.sort(() => 0.5 - Math.random()).slice(0, 30).join(" | ");
-                    const prompt = `Sos Patroclo-B de Nogoyá. Tu ADN es: "${muestra}". Responde corto y facha a: "${msg.content}"`;
+                    const muestraADN = cachedConfig.phrases.sort(() => 0.5 - Math.random()).slice(0, 35).join(" | ");
+                    const prompt = `Sos Patroclo-B. Tu personalidad es un reflejo de este server. Respondé COHERENTE pero con la jerga y humor de este ADN: "${muestraADN}". Contexto: ${chatHistory.join(" | ")}. Usuario dice: "${msg.content}". Sé corto y natural.`;
                     const r = await respuestaIA(prompt);
                     if (r) return msg.reply(r);
                 }
-                // MODOS NORMAL / SERIO
+                // --- OTROS MODOS ---
                 let banco = cachedConfig.modoBot === "serio" ? cachedConfig.phrasesSerias : cachedConfig.phrases;
                 if (banco?.length > 0) return msg.channel.send(banco[Math.floor(Math.random() * banco.length)]);
             }
         }
+        chatHistory.push(`${msg.author.username}: ${msg.content}`);
+        if (chatHistory.length > 8) chatHistory.shift();
         return;
     }
 
     const args = msg.content.slice(1).split(/\s+/);
     const cmd = args.shift().toLowerCase();
 
-    // --- COMANDOS SISTEMA ---
+    // --- 2. COMANDOS SISTEMA ---
     if (cmd === 'modo' && msg.author.id === MI_ID_BOSS) {
-        const nuevoModo = args[0]; // normal, serio, ia
-        if (["normal", "serio", "ia"].includes(nuevoModo)) {
-            cachedConfig.modoBot = nuevoModo;
-            await dataColl.updateOne({ id: "main_config" }, { $set: { modoBot: nuevoModo } }, { upsert: true });
-            return msg.reply(`⚙️ MODO **${nuevoModo.toUpperCase()}** ACTIVADO.`);
+        const nModo = args[0]?.toLowerCase();
+        if (['normal', 'serio', 'ia'].includes(nModo)) {
+            cachedConfig.modoBot = nModo;
+            await dataColl.updateOne({ id: "main_config" }, { $set: { modoBot: nModo } }, { upsert: true });
+            return msg.reply(`🤖 Modo **${nModo.toUpperCase()}** seteado.`);
         }
+    }
+
+    if (cmd === 'stats') {
+        const totalU = await usersColl.countDocuments();
+        return msg.reply(`📊 **ESTADO PATROCLO**\n- ADN: **${cachedConfig.phrases.length}** frases.\n- Usuarios: **${totalU}**\n- Modo: **${cachedConfig.modoBot.toUpperCase()}**`);
     }
 
     if (cmd === 'mantenimiento' && msg.author.id === MI_ID_BOSS) {
         cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
         await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } }, { upsert: true });
-        return msg.reply(cachedConfig.mantenimiento ? "🛠️ MANTENIMIENTO ON." : "🚀 MANTENIMIENTO OFF.");
+        return msg.reply(cachedConfig.mantenimiento ? "🛠️ Mantenimiento Activado." : "🚀 Mantenimiento Desactivado.");
     }
 
-    // --- COMANDOS ARTE (NUEVOS) ---
-    if (cmd === 'imagen') {
-        msg.channel.sendTyping();
-        const img = await generarImagen(args.join(" "), "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5");
-        return img ? msg.channel.send({ files: [{ attachment: img, name: "art1.png" }] }) : msg.reply("Saturado. Probá `!imagen2`.");
+    // --- 3. MÍSTICA & ARTE ---
+    if (cmd === 'horoscopo') {
+        const signos = ["Aries", "Tauro", "Géminis", "Cáncer", "Leo", "Virgo", "Libra", "Escorpio", "Sagitario", "Capricornio", "Acuario", "Piscis"];
+        const prediccion = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)];
+        return msg.reply(`🪐 **${signos[Math.floor(Math.random()*signos.length)]}:** "${prediccion}"`);
     }
 
-    if (cmd === 'imagen2' || cmd === 'foto') {
+    if (cmd === 'imagen' || cmd === 'foto') {
         msg.channel.sendTyping();
-        const img = await generarImagen(args.join(" "), "https://api-inference.huggingface.co/models/dreamlike-art/dreamlike-photoreal-2.0");
-        return img ? msg.channel.send({ files: [{ attachment: img, name: "art2.png" }] }) : msg.reply("Motor 2 saturado.");
+        const m = cmd === 'foto' ? "https://api-inference.huggingface.co/models/dreamlike-art/dreamlike-photoreal-2.0" : "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5";
+        const img = await generarImagen(args.join(" "), m);
+        return img ? msg.channel.send({ files: [{ attachment: img, name: "art.png" }] }) : msg.reply("Motores saturados.");
     }
 
     if (cmd === 'gif') {
         try {
             const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ') || 'galaxy'}&limit=1`);
-            return msg.reply(res.data.data[0]?.url || "No hay gifs.");
+            return msg.reply(res.data.data[0]?.url || "No encontré nada.");
         } catch { return msg.reply("Error Giphy."); }
     }
 
-    // --- ECONOMÍA Y JUEGOS (BASE) ---
-    if (cmd === 'bal') return msg.reply(`💰 Saldo: **${user.points}** PP.`);
+    // --- 4. ECONOMÍA & JUEGOS ---
+    if (cmd === 'bal') return msg.reply(`💰 Tenés **${user.points}** PP.`);
     if (cmd === 'daily') {
-        if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("En 24hs volvé.");
+        if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("No seas mangueador, esperá a mañana.");
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 500 }, $set: { lastDaily: Date.now() } });
-        return msg.reply("💵 +500 Patro-Pesos.");
+        return msg.reply("💵 +500 Patro-Pesos acreditados.");
     }
-    if (cmd === 'pay' || cmd === 'transferencia') {
-        const mencion = msg.mentions.users.first();
-        const monto = parseInt(args[1]) || parseInt(args[0]);
-        if (!mencion || !monto || monto <= 0) return msg.reply("Uso: !pay @user 100.");
-        if (user.points < monto) return msg.reply("No tenés un peso.");
+    if (cmd === 'pay') {
+        const target = msg.mentions.users.first();
+        const monto = parseInt(args[1]);
+        if (!target || !monto || monto <= 0) return msg.reply("Uso: `!pay @user 100`.");
+        if (user.points < monto) return msg.reply("No tenés esa guita.");
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -monto } });
-        await usersColl.updateOne({ userId: mencion.id }, { $inc: { points: monto } }, { upsert: true });
-        return msg.reply(`💸 Enviaste **${monto}** a <@${mencion.id}>.`);
+        await usersColl.updateOne({ userId: target.id }, { $inc: { points: monto } }, { upsert: true });
+        return msg.reply(`💸 Transferiste **${monto}** a <@${target.id}>.`);
     }
-
-    // --- MÍSTICA (RECUPERADOS) ---
-    if (cmd === 'nekoask') return msg.reply(`🐱 Nekoask dice: ${args.join(' ') || '¿Qué?'}`);
-    if (cmd === 'bola8') return msg.reply(`🎱 | ${["Sí.", "No.", "Probablemente.", "Ni lo sueñes."][Math.floor(Math.random()*4)]}`);
-    if (cmd === 'bardo') return msg.reply(cachedConfig.phrases[Math.floor(Math.random()*cachedConfig.phrases.length)] || "Tranqui.");
-    if (cmd === 'suerte') return msg.reply(`🪙 **${Math.random() < 0.5 ? "CARA" : "CRUZ"}**`);
-    if (cmd === 'perfiladn') {
-        msg.channel.sendTyping();
-        const muestra = cachedConfig.phrases.sort(() => 0.5 - Math.random()).slice(0, 40).join(" | ");
-        const r = await respuestaIA(`Analizá el ADN del server y definí la personalidad de Patroclo hoy: ${muestra}`);
-        return msg.reply(r || "ADN confuso.");
-    }
+    if (cmd === 'suerte') return msg.reply(`🪙 Tiraste la moneda: **${Math.random() < 0.5 ? "CARA" : "CRUZ"}**`);
 
     // --- AYUDA ---
     if (cmd === 'ayudacmd') {
-        const e = new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO-B B04.0').setColor('#7D26CD')
+        const e = new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO-B B04.2').setColor('#7D26CD')
             .addFields(
-                { name: '🎨 ARTE/GIFS', value: '`!imagen`, `!imagen2`, `!gif`, `!foto`' },
-                { name: '🎮 JUEGOS', value: '`!poker`, `!ruleta`, `!suerte`, `!aceptar`' },
-                { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!pay`, `!tienda`' },
-                { name: '🌌 MÍSTICA', value: '`!nekoask`, `!bola8`, `!bardo`, `!perfiladn`' },
-                { name: '⚙️ SISTEMA', value: '`!modo ia/normal/serio`, `!stats`, `!mantenimiento`' }
+                { name: '🌌 MÍSTICA & IA', value: '`!horoscopo`, `!modo ia`, `!imagen`, `!foto`, `!gif`, `!suerte`' },
+                { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!pay`, `!ranking`' },
+                { name: '⚙️ SISTEMA', value: '`!stats`, `!mantenimiento`, `!modo`' }
             ).setImage(IMG_PATROCLO_FUERTE);
         return msg.channel.send({ embeds: [e] });
     }
@@ -199,7 +182,7 @@ client.on('messageCreate', async (msg) => {
 async function getUser(id) {
     if (!usersColl) return { points: 0 };
     let u = await usersColl.findOne({ userId: id });
-    if (!u) { u = { userId: id, points: 500, lastDaily: 0, inventario: [] }; await usersColl.insertOne(u); }
+    if (!u) { u = { userId: id, points: 500, lastDaily: 0 }; await usersColl.insertOne(u); }
     return u;
 }
 
