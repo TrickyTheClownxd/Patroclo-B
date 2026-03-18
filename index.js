@@ -6,9 +6,9 @@ import axios from 'axios';
 
 dotenv.config();
 
-// Servidor para Render/Railway
+// Servidor para Keep-Alive
 http.createServer((req, res) => {
-    res.write("Patroclo-B B04.2 ONLINE - DNA Mirror Active");
+    res.write("Patroclo-B B04.7 ONLINE - AI Brain Active");
     res.end();
 }).listen(process.env.PORT || 8080);
 
@@ -24,14 +24,16 @@ let cachedConfig = {
     phrases: [],
     phrasesSerias: ["La disciplina es libertad.", "Respeto ante todo.", "Fuerza en el silencio."],
     mantenimiento: false,
-    modoBot: "normal" // normal, serio, ia
+    modoBot: "ia" // Arranca en IA por defecto para probar el cerebro
 };
 
 const MI_ID_BOSS = '986680845031059526';
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
 const IMG_PATROCLO_FUERTE = 'https://i.ibb.co/XfXkXzV/patroclo-fuerte.jpg';
 
-// --- MOTORES IA Y ARTE ---
+let chatHistory = [];
+
+// --- MOTOR IA (GEMINI) ---
 async function respuestaIA(contexto) {
     try {
         const res = await axios.post(
@@ -39,20 +41,23 @@ async function respuestaIA(contexto) {
             { contents: [{ parts: [{ text: contexto }] }] }, { timeout: 12000 }
         );
         return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-    } catch { return null; }
+    } catch (e) {
+        console.log("❌ Error Gemini:", e.response?.data?.error?.message || e.message);
+        return null;
+    }
 }
 
+// --- MOTOR IMAGEN ---
 async function generarImagen(prompt, modelUrl) {
     try {
         const res = await axios.post(modelUrl, { inputs: prompt }, { 
             headers: { Authorization: `Bearer ${process.env.HF_API_KEY}` }, 
-            responseType: "arraybuffer", timeout: 35000 
+            responseType: "arraybuffer", timeout: 45000 
         });
         return Buffer.from(res.data, "binary");
     } catch { return null; }
 }
 
-// --- CONEXIÓN DB ---
 async function connectDb() {
     try {
         await mongoClient.connect();
@@ -61,12 +66,10 @@ async function connectDb() {
         dataColl = database.collection('bot_data');
         const dbData = await dataColl.findOne({ id: "main_config" });
         if (dbData) { cachedConfig = { ...cachedConfig, ...dbData }; }
-        console.log(`✅ B04.2 Conectado. Memoria: ${cachedConfig.phrases.length} frases.`);
-    } catch (e) { console.log("❌ Error DB:", e); }
+        console.log(`✅ B04.7 Ready. ADN: ${cachedConfig.phrases.length} entradas.`);
+    } catch (e) { console.log("❌ Error DB"); }
 }
 connectDb();
-
-let chatHistory = [];
 
 client.on('messageCreate', async (msg) => {
     if (!msg.author || (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL)) return;
@@ -75,9 +78,8 @@ client.on('messageCreate', async (msg) => {
 
     if (cachedConfig.mantenimiento && msg.author.id !== MI_ID_BOSS) return;
 
-    // --- 1. APRENDIZAJE Y RESPUESTAS ---
+    // --- 1. APRENDIZAJE Y RESPUESTA AUTOMÁTICA ---
     if (!msg.content.startsWith('!')) {
-        // Aprender si no es comando y tiene longitud
         if (!msg.author.bot && msg.content.length > 2 && !msg.content.includes('http')) {
             if (cachedConfig.modoBot !== "serio" && !cachedConfig.phrases.includes(msg.content)) {
                 await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
@@ -85,16 +87,22 @@ client.on('messageCreate', async (msg) => {
             }
             
             const mencionado = content.includes("patroclo") || (msg.mentions && msg.mentions.has(client.user.id));
-            if (mencionado || Math.random() < 0.20) {
-                // --- MODO IA: El Cerebro ---
+            if (mencionado || Math.random() < 0.18) {
                 if (cachedConfig.modoBot === "ia") {
                     msg.channel.sendTyping();
-                    const muestraADN = cachedConfig.phrases.sort(() => 0.5 - Math.random()).slice(0, 35).join(" | ");
-                    const prompt = `Sos Patroclo-B. Tu personalidad es un reflejo de este server. Respondé COHERENTE pero con la jerga y humor de este ADN: "${muestraADN}". Contexto: ${chatHistory.join(" | ")}. Usuario dice: "${msg.content}". Sé corto y natural.`;
-                    const r = await respuestaIA(prompt);
+                    const muestraADN = cachedConfig.phrases.sort(() => 0.5 - Math.random()).slice(0, 40).join(" | ");
+                    
+                    const promptIA = `
+                    Sos Patroclo-B. Tu cerebro es avanzado y coherente como GPT, pero tu personalidad, humor y forma de reírte salen de este ADN: "${muestraADN}".
+                    REGLA: Respondé con SENTIDO a lo que te dicen, pero usando la jerga, los insultos y los chistes del ADN.
+                    Contexto de charla: ${chatHistory.join(" | ")}
+                    Usuario dice: "${msg.content}"
+                    `;
+                    
+                    const r = await respuestaIA(promptIA);
                     if (r) return msg.reply(r);
                 }
-                // --- OTROS MODOS ---
+                
                 let banco = cachedConfig.modoBot === "serio" ? cachedConfig.phrasesSerias : cachedConfig.phrases;
                 if (banco?.length > 0) return msg.channel.send(banco[Math.floor(Math.random() * banco.length)]);
             }
@@ -107,32 +115,48 @@ client.on('messageCreate', async (msg) => {
     const args = msg.content.slice(1).split(/\s+/);
     const cmd = args.shift().toLowerCase();
 
-    // --- 2. COMANDOS SISTEMA ---
+    // --- 2. COMANDOS DE SISTEMA ---
     if (cmd === 'modo' && msg.author.id === MI_ID_BOSS) {
-        const nModo = args[0]?.toLowerCase();
-        if (['normal', 'serio', 'ia'].includes(nModo)) {
-            cachedConfig.modoBot = nModo;
-            await dataColl.updateOne({ id: "main_config" }, { $set: { modoBot: nModo } }, { upsert: true });
-            return msg.reply(`🤖 Modo **${nModo.toUpperCase()}** seteado.`);
+        if (['normal', 'serio', 'ia'].includes(args[0])) {
+            cachedConfig.modoBot = args[0];
+            await dataColl.updateOne({ id: "main_config" }, { $set: { modoBot: args[0] } }, { upsert: true });
+            return msg.reply(`🤖 Modo **${args[0].toUpperCase()}** activado.`);
         }
     }
 
     if (cmd === 'stats') {
         const totalU = await usersColl.countDocuments();
-        return msg.reply(`📊 **ESTADO PATROCLO**\n- ADN: **${cachedConfig.phrases.length}** frases.\n- Usuarios: **${totalU}**\n- Modo: **${cachedConfig.modoBot.toUpperCase()}**`);
+        let promedioPalabras = 0;
+        if (cachedConfig.phrases.length > 0) {
+            const totalPalabras = cachedConfig.phrases.reduce((acc, f) => acc + f.split(/\s+/).length, 0);
+            promedioPalabras = (totalPalabras / cachedConfig.phrases.length).toFixed(2);
+        }
+
+        const eStats = new EmbedBuilder()
+            .setTitle("📊 PATRO-SISTEMA B04.7")
+            .setColor("#00ffcc")
+            .addFields(
+                { name: '🧠 Memoria ADN', value: `${cachedConfig.phrases.length} frases.`, inline: true },
+                { name: '📈 Promedio Palabras', value: `${promedioPalabras}`, inline: true },
+                { name: '🤖 Modo', value: cachedConfig.modoBot.toUpperCase(), inline: true },
+                { name: '👥 Usuarios', value: `${totalU}`, inline: true },
+                { name: '📝 Último aprendizaje', value: `*"${cachedConfig.phrases[cachedConfig.phrases.length-1] || 'Nada'}"*` }
+            );
+        return msg.channel.send({ embeds: [eStats] });
     }
 
-    if (cmd === 'mantenimiento' && msg.author.id === MI_ID_BOSS) {
-        cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
-        await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } }, { upsert: true });
-        return msg.reply(cachedConfig.mantenimiento ? "🛠️ Mantenimiento Activado." : "🚀 Mantenimiento Desactivado.");
+    if (cmd === 'ranking' || cmd === 'top') {
+        const top = await usersColl.find().sort({ points: -1 }).limit(10).toArray();
+        const e = new EmbedBuilder().setTitle("🏆 TOP MILLONARIOS").setColor("#FFD700")
+            .setDescription(top.map((u, i) => `**${i+1}.** <@${u.userId}> — ${u.points} PP`).join("\n"));
+        return msg.channel.send({ embeds: [e] });
     }
 
-    // --- 3. MÍSTICA & ARTE ---
+    // --- 3. MÍSTICA & ECONOMÍA ---
     if (cmd === 'horoscopo') {
         const signos = ["Aries", "Tauro", "Géminis", "Cáncer", "Leo", "Virgo", "Libra", "Escorpio", "Sagitario", "Capricornio", "Acuario", "Piscis"];
-        const prediccion = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)];
-        return msg.reply(`🪐 **${signos[Math.floor(Math.random()*signos.length)]}:** "${prediccion}"`);
+        const pred = cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)] || "Ni idea.";
+        return msg.reply(`🪐 **${signos[Math.floor(Math.random()*signos.length)]}:** "${pred}"`);
     }
 
     if (cmd === 'imagen' || cmd === 'foto') {
@@ -142,40 +166,11 @@ client.on('messageCreate', async (msg) => {
         return img ? msg.channel.send({ files: [{ attachment: img, name: "art.png" }] }) : msg.reply("Motores saturados.");
     }
 
-    if (cmd === 'gif') {
-        try {
-            const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ') || 'galaxy'}&limit=1`);
-            return msg.reply(res.data.data[0]?.url || "No encontré nada.");
-        } catch { return msg.reply("Error Giphy."); }
-    }
-
-    // --- 4. ECONOMÍA & JUEGOS ---
     if (cmd === 'bal') return msg.reply(`💰 Tenés **${user.points}** PP.`);
     if (cmd === 'daily') {
-        if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("No seas mangueador, esperá a mañana.");
+        if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("Mañana.");
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 500 }, $set: { lastDaily: Date.now() } });
-        return msg.reply("💵 +500 Patro-Pesos acreditados.");
-    }
-    if (cmd === 'pay') {
-        const target = msg.mentions.users.first();
-        const monto = parseInt(args[1]);
-        if (!target || !monto || monto <= 0) return msg.reply("Uso: `!pay @user 100`.");
-        if (user.points < monto) return msg.reply("No tenés esa guita.");
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -monto } });
-        await usersColl.updateOne({ userId: target.id }, { $inc: { points: monto } }, { upsert: true });
-        return msg.reply(`💸 Transferiste **${monto}** a <@${target.id}>.`);
-    }
-    if (cmd === 'suerte') return msg.reply(`🪙 Tiraste la moneda: **${Math.random() < 0.5 ? "CARA" : "CRUZ"}**`);
-
-    // --- AYUDA ---
-    if (cmd === 'ayudacmd') {
-        const e = new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO-B B04.2').setColor('#7D26CD')
-            .addFields(
-                { name: '🌌 MÍSTICA & IA', value: '`!horoscopo`, `!modo ia`, `!imagen`, `!foto`, `!gif`, `!suerte`' },
-                { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!pay`, `!ranking`' },
-                { name: '⚙️ SISTEMA', value: '`!stats`, `!mantenimiento`, `!modo`' }
-            ).setImage(IMG_PATROCLO_FUERTE);
-        return msg.channel.send({ embeds: [e] });
+        return msg.reply("💵 +500 PP.");
     }
 });
 
