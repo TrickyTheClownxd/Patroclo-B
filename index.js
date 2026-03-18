@@ -6,7 +6,7 @@ import axios from 'axios';
 
 dotenv.config();
 
-// --- CONFIGURACIÓN ---
+// --- CONFIGURACIÓN DE ESTADO ---
 let chatHistory = [];
 let modoBot = "normal"; 
 
@@ -16,14 +16,13 @@ const client = new Client({
 });
 
 const mongoClient = new MongoClient(process.env.MONGO_URI);
-let usersColl, dataColl, memoryColl;
+let usersColl, dataColl;
 
 let cachedConfig = { 
   phrases: [], 
-  universeFacts: [],
-  phrasesSerias: ["La disciplina es clave.", "Respeto ante todo.", "El silencio es fuerza."], 
-  mantenimiento: false,
-  modoSerio: false 
+  universeFacts: ["El universo es bardo puro.", "Nogoyá es el centro del cosmos."],
+  phrasesSerias: ["La disciplina es el puente al éxito.", "Respeto y coherencia."], 
+  mantenimiento: false 
 };
 
 if (!client.retos) client.retos = new Map();
@@ -32,13 +31,10 @@ const MI_ID_BOSS = '986680845031059526';
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
 const IMG_PATROCLO_FUERTE = 'https://i.ibb.co/XfXkXzV/patroclo-fuerte.jpg';
 
-// --- SERVIDOR ---
-http.createServer((req, res) => { 
-  res.write("Patroclo-B PRO B02.5 ONLINE"); 
-  res.end(); 
-}).listen(process.env.PORT || 8080);
+// Servidor para que Railway no lo mate
+http.createServer((req, res) => { res.write("Patroclo-B PRO B02.7 ONLINE"); res.end(); }).listen(process.env.PORT || 8080);
 
-// --- FUNCIONES IA / MULTIMEDIA ---
+// --- CEREBRO IA (GEMINI 1.5 FLASH) ---
 async function respuestaIA(contexto) {
   try {
     const res = await axios.post(
@@ -60,31 +56,34 @@ async function generarImagen(prompt) {
   } catch { return null; }
 }
 
-// --- CONEXIÓN DB ---
+async function buscarGif(query) {
+  try {
+    const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${query || 'funny'}&limit=1`);
+    return res.data.data[0]?.url || null;
+  } catch { return null; }
+}
+
+// --- DB CONNECTION ---
 async function connectDb() {
   try {
     await mongoClient.connect();
     const db = mongoClient.db('patroclo_bot');
     usersColl = db.collection('users');
     dataColl = db.collection('bot_data');
-    memoryColl = db.collection('user_memory');
     const dbData = await dataColl?.findOne({ id: "main_config" });
-    if (dbData) {
-        cachedConfig = { ...cachedConfig, ...dbData };
-        if (cachedConfig.modoSerio) modoBot = "serio";
-    }
-    console.log("✅ PATROCLO-B PRO B02.5 CONECTADO");
+    if (dbData) cachedConfig = { ...cachedConfig, ...dbData };
+    console.log("✅ PATROCLO-B PRO B02.7 CONECTADO");
   } catch (e) { console.log("❌ Error DB:", e); }
 }
 connectDb();
 
-// --- LÓGICA PRINCIPAL ---
+// --- EVENTO PRINCIPAL ---
 client.on('messageCreate', async (msg) => {
   if (!msg.author || (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL)) return;
   const content = msg.content?.toLowerCase() || "";
   const user = await getUser(msg.author.id);
 
-  // 1. Guardar en el ADN (Solo si no es comando)
+  // 1. Guardar ADN (Solo si es mensaje común)
   if (!msg.content.startsWith('!') && !msg.author.bot && msg.content.length > 3) {
     if (modoBot !== "serio" && !cachedConfig.phrases.includes(msg.content)) {
         cachedConfig.phrases.push(msg.content);
@@ -92,23 +91,23 @@ client.on('messageCreate', async (msg) => {
     }
   }
 
-  // 2. Respuestas Automáticas
+  // 2. Lógica de Respuesta Automática
   if (!msg.content.startsWith('!')) {
     const mencionado = msg.mentions?.has(client.user.id) || content.includes("patroclo");
-    
     if (mencionado || Math.random() < 0.20) {
-        // --- PRIORIDAD IA: Si está en IA, NO usa frases del ADN ---
+        
         if (modoBot === "ia") {
             msg.channel.sendTyping();
-            const prompt = `Sos Patroclo-B, de Nogoyá, Entre Ríos. Estilo argentino, rkt, bardo pero facha. 
-            NO uses frases repetidas. Respondé de forma ORIGINAL y corta a: "${msg.content}". 
-            Contexto: ${chatHistory.join(" | ")}`;
+            const muestraADN = cachedConfig.phrases.slice(-30).join(" | ");
+            const prompt = `Sos Patroclo-B, bot de Nogoyá. Tu estilo es argentino, rkt y bardo. 
+            MIRA ESTOS EJEMPLOS DE COMO HABLAN EN EL SERVER (ADN): "${muestraADN}".
+            Responde de forma ORIGINAL usando esa onda a: "${msg.content}". 
+            Contexto reciente: ${chatHistory.join(" | ")}`;
             
             const r = await respuestaIA(prompt);
             if (r) return msg.reply(r);
         }
 
-        // --- BACKUP: Si no es IA, usa el ADN ---
         let banco = (modoBot === "serio") ? cachedConfig.phrasesSerias : cachedConfig.phrases;
         if (banco?.length > 0) return msg.channel.send(banco[Math.floor(Math.random() * banco.length)]);
     }
@@ -117,16 +116,16 @@ client.on('messageCreate', async (msg) => {
     return;
   }
 
-  // --- COMANDOS ---
+  // --- 3. COMANDOS ---
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
   if (cachedConfig.mantenimiento && msg.author.id !== MI_ID_BOSS) return;
 
-  // Timba
+  // TIMBA Y JUEGOS
   if (cmd === 'poker' || cmd === 'penal') {
     const m = msg.mentions.users.first();
     const cant = parseInt(args[1]) || parseInt(args[0]) || 100;
-    if (user.points < cant) return msg.reply("No tenés un peso.");
+    if (user.points < cant) return msg.reply("No tenés guita.");
     if (m) {
         client.retos.set(m.id, { tipo: cmd, retador: msg.author.id, monto: cant });
         return msg.channel.send(`⚔️ <@${m.id}>, !aceptar por **${cant}**.`);
@@ -138,57 +137,72 @@ client.on('messageCreate', async (msg) => {
 
   if (cmd === 'ruleta') {
     const cant = parseInt(args[0]) || 500;
-    if (user.points < cant) return msg.reply("Fondos insuficientes.");
+    if (user.points < cant) return msg.reply("No tenés saldo.");
     if (Math.random() < 0.16) {
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -cant } });
         return msg.reply("💥 **BANG!**");
     }
-    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: Math.floor(cant * 1.3) } });
-    return msg.reply("🔫 **CLIC.** Ganaste.");
+    await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: Math.floor(cant * 1.5) } });
+    return msg.reply("🔫 **CLIC.** Zafaste.");
   }
 
   if (cmd === 'aceptar') {
     const r = client.retos.get(msg.author.id);
-    if (!r) return msg.reply("Sin retos.");
+    if (!r) return msg.reply("No hay retos.");
     const win = Math.random() < 0.5;
     const g = win ? r.retador : msg.author.id; const p = win ? msg.author.id : r.retador;
     await usersColl.updateOne({ userId: g }, { $inc: { points: r.monto } });
     await usersColl.updateOne({ userId: p }, { $inc: { points: -r.monto } });
     client.retos.delete(msg.author.id);
-    return msg.channel.send(`🏆 <@${g}> se llevó los **${r.monto}**.`);
+    return msg.channel.send(`🏆 <@${g}> ganó los **${r.monto}**.`);
   }
 
-  // Economía básica
-  if (cmd === 'bal') return msg.reply(`💰 Saldo: **${user.points}**.`);
+  // ECONOMÍA
+  if (cmd === 'bal') return msg.reply(`💰 Saldo: **${user.points}** Patro-Pesos.`);
   if (cmd === 'daily') {
-    if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("Mañana volvé.");
+    if (Date.now() - (user.lastDaily || 0) < 86400000) return msg.reply("Ya pediste, bobi.");
     await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 500 }, $set: { lastDaily: Date.now() } });
     return msg.reply("💵 +500.");
   }
 
-  // Modos y Multimedia
+  // MULTIMEDIA Y IA
   if (cmd === "modo" || cmd === "personalidad") {
     if (msg.author.id !== MI_ID_BOSS) return msg.reply("Solo el Boss.");
     if (!["normal","serio","ia"].includes(args[0])) return msg.reply("normal | serio | ia");
     modoBot = args[0];
-    await dataColl?.updateOne({ id: "main_config" }, { $set: { modoSerio: (modoBot === "serio") } }, { upsert: true });
-    return msg.reply(`🤖 Modo **${modoBot.toUpperCase()}**.`);
+    return msg.reply(`🤖 Modo **${modoBot.toUpperCase()}** activado.`);
   }
 
   if (cmd === "imagen") {
     msg.channel.sendTyping();
     const img = await generarImagen(args.join(" "));
-    return img ? msg.channel.send({ files: [{ attachment: img, name: "patro.png" }] }) : msg.reply("Error.");
+    return img ? msg.channel.send({ files: [{ attachment: img, name: "art.png" }] }) : msg.reply("Error.");
   }
 
+  if (cmd === 'gif' || cmd === 'foto') {
+    const url = await buscarGif(args.join(' '));
+    return url ? msg.reply(url) : msg.reply("Nada encontrado.");
+  }
+
+  if (cmd === 'horoscopo') {
+    const s = ["Aries", "Tauro", "Géminis", "Cáncer", "Leo", "Virgo", "Libra", "Escorpio", "Sagitario", "Capricornio", "Acuario", "Piscis"][Math.floor(Math.random()*12)];
+    const p = cachedConfig.phrases[Math.floor(Math.random()*cachedConfig.phrases.length)] || "Bardo astral.";
+    return msg.reply(`🪐 **${s}:** "${p}"`);
+  }
+
+  // SISTEMA
   if (cmd === 'stats') return msg.reply(`📊 ADN: ${cachedConfig.phrases.length} | Modo: ${modoBot}`);
-  
+  if (cmd === 'mantenimiento' && msg.author.id === MI_ID_BOSS) {
+    cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
+    return msg.reply(cachedConfig.mantenimiento ? "⚠️ MANTENIMIENTO ON." : "🚀 MANTENIMIENTO OFF.");
+  }
+
   if (cmd === 'ayudacmd') {
     const e = new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO PRO').setColor('#7D26CD')
       .addFields(
-        { name: '🕹️ TIMBA', value: '`!poker`, `!penal`, `!ruleta`, `!suerte`, `!aceptar`' },
+        { name: '🎮 JUEGOS', value: '`!poker`, `!penal`, `!ruleta`, `!suerte`, `!aceptar`' },
         { name: '💰 PLATA', value: '`!bal`, `!daily`, `!pay`' },
-        { name: '🤖 IA/MÍSTICA', value: '`!modo ia`, `!imagen`, `!horoscopo`' }
+        { name: '🤖 IA/MÍSTICA', value: '`!modo ia`, `!imagen`, `!horoscopo`, `!gif`' }
       ).setImage(IMG_PATROCLO_FUERTE);
     return msg.channel.send({ embeds: [e] });
   }
