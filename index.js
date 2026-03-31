@@ -6,7 +6,7 @@ import axios from 'axios';
 
 dotenv.config();
 
-// Servidor para Render (Evita el Port Timeout)
+// Servidor para Render
 http.createServer((req, res) => { 
   res.write("Patroclo-B B17.5 OMEGA ONLINE"); 
   res.end(); 
@@ -43,7 +43,8 @@ const MI_ID_BOSS = '986680845031059526';
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
 const VOICE_ID_LOQUENDO = "pNInz6obpgDQGcFmaJgB"; 
 
-// --- ESPERANDO TUS IDS ACÁ ---
+// --- REEMPLAZÁ CON EL ID DE UN CANAL DE TU SERVER PARA EL TEST ---
+const ID_CANAL_TEST = 'ID_DEL_CANAL_AQUÍ'; 
 const ROLES_RANDOM = ["ID_ROL_1", "ID_ROL_2", "ID_ROL_3"]; 
 
 // --- MOTOR DE CARTAS ---
@@ -84,10 +85,19 @@ async function connectDb() {
     dataColl = db.collection('bot_data');
     const d = await dataColl.findOne({ id: "main_config" });
     if (d) cachedConfig = { ...cachedConfig, ...d };
-    console.log("✅ FUSIÓN B17.5 CONECTADA");
-  } catch (e) { console.log("❌ Error de DB"); }
+    console.log("✅ FUSIÓN B17.5 CONECTADA A MONGODB");
+  } catch (e) { console.log("❌ Error de DB:", e.message); }
 }
 connectDb();
+
+// EVENTO DE ARRANQUE (DEBUG)
+client.on('ready', () => {
+  console.log(`🤖 DISCORD OK: Logueado como ${client.user.tag}`);
+  const canal = client.channels.cache.get(ID_CANAL_TEST);
+  if (canal) {
+    canal.send("🔥 **PATROCLO-B ONLINE.** Sistema cargado y listo para el bardo.");
+  }
+});
 
 client.on('messageCreate', async (msg) => {
   if (!msg.author || msg.author.bot) return;
@@ -95,11 +105,14 @@ client.on('messageCreate', async (msg) => {
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
+  // Test de vida sin prefijo
+  if (content === 'ping') return msg.reply('🏓 Pong! Estoy vivo.');
+
   // APRENDIZAJE Y RESPUESTA AUTOMÁTICA
   if (!msg.content.startsWith('!')) {
     if (msg.content.length > 3 && !msg.content.includes('http')) {
       if (!cachedConfig.phrases.includes(msg.content)) {
-        await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
+        if(dataColl) await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
         cachedConfig.phrases.push(msg.content);
       }
     }
@@ -132,25 +145,12 @@ client.on('messageCreate', async (msg) => {
       if (user.points < 5000) return msg.reply("El lote sale $5000, seco.");
       const rID = ROLES_RANDOM[Math.floor(Math.random() * ROLES_RANDOM.length)];
       try {
-        await msg.member.roles.add(rID);
+        const role = msg.guild.roles.cache.get(rID);
+        if(!role) return msg.reply("ID de rol no configurado.");
+        await msg.member.roles.add(role);
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -5000 } });
-        msg.reply("🎁 ¡Lote abierto! Tenés un nuevo rol.");
+        msg.reply(`🎁 ¡Lote abierto! Sos un nuevo **${role.name}**.`);
       } catch (e) { msg.reply("No tengo permisos para darte ese rol."); }
-      break;
-
-    case 'habla':
-      if (!process.env.ELEVENLABS_API_KEY) return msg.reply("No tengo garganta.");
-      try {
-        const aud = await axios.post(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID_LOQUENDO}`, 
-          { text: args.join(" "), model_id: "eleven_multilingual_v2" },
-          { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY }, responseType: 'arraybuffer' });
-        msg.reply({ files: [{ attachment: Buffer.from(aud.data), name: 'loquendo.mp3' }] });
-      } catch (e) { msg.reply("Garganta de lata rota."); }
-      break;
-
-    case 'gif':
-      const resG = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(' ')||'argentina'}&limit=1`);
-      msg.reply(resG.data.data[0]?.url || "Nada che.");
       break;
 
     case 'ayudacmd':
@@ -166,10 +166,12 @@ client.on('messageCreate', async (msg) => {
 });
 
 async function getUser(id) {
-  if (!usersColl) return { points: 0 };
+  if (!usersColl) return { userId: id, points: 1000 };
   let u = await usersColl.findOne({ userId: id });
   if (!u) { u = { userId: id, points: 1000 }; await usersColl.insertOne(u); }
   return u;
 }
 
-client.login(process.env.TOKEN).catch(err => console.error("TOKEN ERROR:", err.message));
+client.login(process.env.TOKEN).catch(err => {
+  console.error("❌ ERROR CRÍTICO DE DISCORD:", err.message);
+});
