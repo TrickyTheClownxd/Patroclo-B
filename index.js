@@ -18,7 +18,9 @@ const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
 let cachedConfig = { phrases: [], mantenimiento: false, modoBot: "ia", mejorMensaje: "..." };
 
-// --- MOTOR IA (LLAMA4/GEMINI) ---
+// --- LÓGICA DE ADN DINÁMICO ---
+let usuariosRecientes = new Set(); 
+
 async function respuestaIA(contexto) {
   try {
     const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API}`,
@@ -39,7 +41,6 @@ async function start() {
   } catch (e) { console.log("DB Error"); }
 }
 
-// --- ADN Y APRENDIZAJE ---
 client.on('messageCreate', async (msg) => {
   if (!msg.author || msg.author.bot) return;
   const user = await getUser(msg.author.id);
@@ -47,26 +48,25 @@ client.on('messageCreate', async (msg) => {
 
   if (cachedConfig.mantenimiento && msg.author.id !== '986680845031059526') return;
 
+  // --- LÓGICA DE ADN (POR USUARIOS DISTINTOS) ---
   if (!msg.content.startsWith('!')) {
-    // Aprendizaje de ADN
-    if (msg.content.length > 5 && !msg.content.includes('http')) {
+    // Aprender frases
+    if (msg.content.length > 4 && !msg.content.includes('http')) {
       if (!cachedConfig.phrases.includes(msg.content)) {
         cachedConfig.phrases.push(msg.content);
         await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
       }
-      // Probabilidad de "Mejor Mensaje"
-      if (Math.random() < 0.05) {
-        cachedConfig.mejorMensaje = `"${msg.content}" (by ${msg.author.username})`;
-        await dataColl.updateOne({ id: "main_config" }, { $set: { mejorMensaje: cachedConfig.mejorMensaje } });
-      }
     }
 
-    // ADN 25% + Apodos
-    const apodos = ["patroclo", "patroclin", "patro"];
-    const menc = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
-    if (menc || Math.random() < 0.25) {
+    usuariosRecientes.add(msg.author.id);
+    const apodos = ["patroclo", "patroclin", "patro", "facha"];
+    const loLlaman = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
+
+    // Habla si lo llaman O si hay 3-4 usuarios distintos hablando
+    if (loLlaman || usuariosRecientes.size >= Math.floor(Math.random() * (5 - 3) + 3)) {
+      usuariosRecientes.clear(); // Reinicia el contador de personas
       const adn = cachedConfig.phrases.slice(-20).join(" | ");
-      const r = await respuestaIA(`Patroclo-B facha. ADN: ${adn}. Responde corto a ${msg.author.username}: ${msg.content}`);
+      const r = await respuestaIA(`Sos Patroclo-B, facha y bardo. ADN: ${adn}. Responde corto a ${msg.author.username}: ${msg.content}`);
       return msg.reply(r || cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
     }
     return;
@@ -77,44 +77,54 @@ client.on('messageCreate', async (msg) => {
 
   switch (cmd) {
     case 'stats':
-      const ultimaFrase = cachedConfig.phrases[cachedConfig.phrases.length - 1] || "Nada todavía";
-      const embedStats = new EmbedBuilder()
+      const ultima = cachedConfig.phrases[cachedConfig.phrases.length - 1] || "Ninguna";
+      const eStats = new EmbedBuilder()
         .setTitle('📊 ESTADO DEL GIGANTE')
         .setColor('#0099ff')
         .addFields(
-          { name: '🧠 ADN', value: `${cachedConfig.phrases.length} frases`, inline: true },
-          { name: '🔥 Agite', value: '25%', inline: true },
-          { name: '📝 Última aprendida', value: `"${ultimaFrase}"` }
-        ).setFooter({ text: `Patroclo-B B17.5` });
-      msg.reply({ embeds: [embedStats] });
+          { name: '🧠 FRASES EN ADN', value: `${cachedConfig.phrases.length}`, inline: true },
+          { name: '📝 ÚLTIMA APRENDIDA', value: `"${ultima}"` },
+          { name: '🏆 RECUERDO', value: cachedConfig.mejorMensaje }
+        );
+      msg.reply({ embeds: [eStats] });
       break;
 
-    case 'ayudacmd':
-      const help = new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO-B').setColor('#7D26CD')
-        .addFields(
-          { name: '🎮 JUEGOS', value: '`!poker`, `!penal`, `!ruleta`, `!suerte`, `!bingo`, `!bj`' },
-          { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!tienda`, `!trabajo`, `!pay`' },
-          { name: '🌌 MÍSTICA', value: '`!horoscopo`, `!bola8`, `!universefacts`' },
-          { name: '⚙️ SISTEMA', value: '`!stats`, `!mantenimiento`, `!modo`' }
-        );
-      msg.reply({ embeds: [help] });
+    case 'penal':
+      const arco = ['izquierda', 'derecha', 'centro'];
+      const patea = args[0];
+      if (!arco.includes(patea)) return msg.reply("Pateá a: `izquierda`, `derecha` o `centro`.");
+      const ataja = arco[Math.floor(Math.random() * 3)];
+      if (patea === ataja) {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -200 } });
+        msg.reply(`🧤 El arquero fue a la ${ataja}. ¡ATAJADO! Perdiste $200.`);
+      } else {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 500 } });
+        msg.reply(`⚽ ¡GOOOL! Fue a la ${patea} y el arquero a la ${ataja}. +$500.`);
+      }
+      break;
+
+    case 'bingo':
+      const num = Math.floor(Math.random() * 10) + 1;
+      const saca = Math.floor(Math.random() * 10) + 1;
+      if (num === saca) {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 2000 } });
+        msg.reply(`🎱 Cantaste el ${num} y salió el ${saca}. ¡BINGO! +$2000.`);
+      } else {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -100 } });
+        msg.reply(`🎱 Salió el ${saca}, vos tenías el ${num}. Seguí participando.`);
+      }
       break;
 
     case 'mantenimiento':
       if (msg.author.id !== '986680845031059526') return;
       cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
-      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } }, { upsert: true });
-      const statusEmbed = new EmbedBuilder()
-        .setDescription(`📌 **RECUERDO DE LA SESIÓN:** ${cachedConfig.mejorMensaje}\n\n⚠️ **SISTEMA OFFLINE** ⚠️\nEl Boss está actualizando el ADN.`)
-        .setColor('#ff0000');
-      msg.channel.send({ embeds: [statusEmbed] });
+      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } });
+      msg.channel.send({ embeds: [new EmbedBuilder().setTitle('⚠️ SISTEMA OFFLINE').setDescription(`Recuerdo: ${cachedConfig.mejorMensaje}`).setColor('#ff0000')] });
       break;
 
     case 'noticias':
-      msg.reply("📰 **NOTICIAS:** Integrado motor LLAMA4, sistema de apuestas realista, ADN persistente al 25% y comandos de economía sincronizados.");
+      msg.reply("📰 **NOTICIAS:** ADN optimizado para grupos, Stats con última frase y comandos de timba revisados.");
       break;
-
-    // ... (Aquí irían los restos de juegos: ruleta, poker, bingo con lógica corta)
   }
 });
 
