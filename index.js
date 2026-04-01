@@ -6,7 +6,6 @@ import axios from 'axios';
 
 dotenv.config();
 
-// 1. HOSTING FIX
 http.createServer((req, res) => { res.write("Patroclo B17.5 ONLINE"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
@@ -16,10 +15,8 @@ const client = new Client({
 
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
-let cachedConfig = { phrases: [], mantenimiento: false, modoBot: "ia", mejorMensaje: "..." };
-
-// --- LÓGICA DE ADN DINÁMICO ---
-let usuariosRecientes = new Set(); 
+let cachedConfig = { phrases: [], mantenimiento: false, modoBot: "ia", mejorMensaje: "Sin recuerdos." };
+let msgCounter = 0; // Contador para que hable seguido
 
 async function respuestaIA(contexto) {
   try {
@@ -48,25 +45,25 @@ client.on('messageCreate', async (msg) => {
 
   if (cachedConfig.mantenimiento && msg.author.id !== '986680845031059526') return;
 
-  // --- LÓGICA DE ADN (POR USUARIOS DISTINTOS) ---
+  // --- LÓGICA DE ADN (HABLA CADA 2-3 MENSAJES) ---
   if (!msg.content.startsWith('!')) {
-    // Aprender frases
-    if (msg.content.length > 4 && !msg.content.includes('http')) {
+    msgCounter++;
+    
+    if (msg.content.length > 5 && !msg.content.includes('http')) {
       if (!cachedConfig.phrases.includes(msg.content)) {
         cachedConfig.phrases.push(msg.content);
         await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
       }
     }
 
-    usuariosRecientes.add(msg.author.id);
     const apodos = ["patroclo", "patroclin", "patro", "facha"];
-    const loLlaman = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
+    const menc = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
+    const triggerHableSolo = msgCounter >= Math.floor(Math.random() * (4 - 2) + 2);
 
-    // Habla si lo llaman O si hay 3-4 usuarios distintos hablando
-    if (loLlaman || usuariosRecientes.size >= Math.floor(Math.random() * (5 - 3) + 3)) {
-      usuariosRecientes.clear(); // Reinicia el contador de personas
-      const adn = cachedConfig.phrases.slice(-20).join(" | ");
-      const r = await respuestaIA(`Sos Patroclo-B, facha y bardo. ADN: ${adn}. Responde corto a ${msg.author.username}: ${msg.content}`);
+    if (menc || triggerHableSolo) {
+      msgCounter = 0; // Reset
+      const adn = cachedConfig.phrases.slice(-25).join(" | ");
+      const r = await respuestaIA(`Sos Patroclo-B, bot argentino, bardo y facha. ADN: ${adn}. Responde corto a ${msg.author.username}: ${msg.content}`);
       return msg.reply(r || cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
     }
     return;
@@ -75,62 +72,88 @@ client.on('messageCreate', async (msg) => {
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
+  // --- COMANDOS REPARADOS ---
   switch (cmd) {
     case 'stats':
       const ultima = cachedConfig.phrases[cachedConfig.phrases.length - 1] || "Ninguna";
-      const eStats = new EmbedBuilder()
-        .setTitle('📊 ESTADO DEL GIGANTE')
-        .setColor('#0099ff')
-        .addFields(
-          { name: '🧠 FRASES EN ADN', value: `${cachedConfig.phrases.length}`, inline: true },
-          { name: '📝 ÚLTIMA APRENDIDA', value: `"${ultima}"` },
-          { name: '🏆 RECUERDO', value: cachedConfig.mejorMensaje }
-        );
-      msg.reply({ embeds: [eStats] });
+      msg.reply({ embeds: [new EmbedBuilder().setTitle('📊 STATS').setColor('#0099ff').addFields(
+        { name: '🧠 ADN', value: `${cachedConfig.phrases.length} frases`, inline: true },
+        { name: '📝 ÚLTIMA APRENDIDA', value: `"${ultima}"` },
+        { name: '🏆 RECUERDO', value: cachedConfig.mejorMensaje }
+      )] });
+      break;
+
+    case 'bal': case 'plata':
+      msg.reply(`💰 Tenés **$${user.points}** en la billetera.`);
+      break;
+
+    case 'daily':
+      const ahora = Date.now();
+      if (ahora - (user.lastDaily || 0) < 86400000) return msg.reply("Ya cobraste hoy, no seas caradura.");
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 1500 }, $set: { lastDaily: ahora } });
+      msg.reply("💵 Cobraste tus **$1500** del día.");
       break;
 
     case 'penal':
       const arco = ['izquierda', 'derecha', 'centro'];
       const patea = args[0];
-      if (!arco.includes(patea)) return msg.reply("Pateá a: `izquierda`, `derecha` o `centro`.");
+      if (!arco.includes(patea)) return msg.reply("¿A dónde pateás? `izquierda`, `derecha` o `centro`.");
       const ataja = arco[Math.floor(Math.random() * 3)];
       if (patea === ataja) {
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -200 } });
-        msg.reply(`🧤 El arquero fue a la ${ataja}. ¡ATAJADO! Perdiste $200.`);
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -300 } });
+        msg.reply(`🧤 El arquero se tiró a la ${ataja}. **ATAJADO.** Perdiste $300.`);
       } else {
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 500 } });
-        msg.reply(`⚽ ¡GOOOL! Fue a la ${patea} y el arquero a la ${ataja}. +$500.`);
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 600 } });
+        msg.reply(`⚽ ¡GOOOL! El arquero fue a la ${ataja}. Ganaste **$600**.`);
       }
       break;
 
-    case 'bingo':
-      const num = Math.floor(Math.random() * 10) + 1;
-      const saca = Math.floor(Math.random() * 10) + 1;
-      if (num === saca) {
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 2000 } });
-        msg.reply(`🎱 Cantaste el ${num} y salió el ${saca}. ¡BINGO! +$2000.`);
+    case 'ruleta':
+      const apuestaR = parseInt(args[0]);
+      const color = args[1];
+      if (isNaN(apuestaR) || !['rojo', 'negro'].includes(color)) return msg.reply("Uso: `!ruleta 500 rojo`.");
+      if (user.points < apuestaR) return msg.reply("No tenés esa guita.");
+      const salio = Math.random() > 0.5 ? 'rojo' : 'negro';
+      if (salio === color) {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: apuestaR } });
+        msg.reply(`🎰 Salió **${salio}**. ¡Ganaste $${apuestaR}!`);
       } else {
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -100 } });
-        msg.reply(`🎱 Salió el ${saca}, vos tenías el ${num}. Seguí participando.`);
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -apuestaR } });
+        msg.reply(`🎰 Salió **${salio}**. Perdiste todo.`);
+      }
+      break;
+
+    case 'poker': case 'bingo':
+      const azar = Math.random() > 0.7;
+      const premio = Math.floor(Math.random() * 2000);
+      if (azar) {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: premio } });
+        msg.reply(`🃏 ¡TREMENDA JUGADA! Te llevaste **$${premio}**.`);
+      } else {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -200 } });
+        msg.reply("💀 Perdiste $200. Sos malísimo.");
       }
       break;
 
     case 'mantenimiento':
       if (msg.author.id !== '986680845031059526') return;
       cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
-      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } });
-      msg.channel.send({ embeds: [new EmbedBuilder().setTitle('⚠️ SISTEMA OFFLINE').setDescription(`Recuerdo: ${cachedConfig.mejorMensaje}`).setColor('#ff0000')] });
+      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } }, { upsert: true });
+      msg.channel.send({ embeds: [new EmbedBuilder().setTitle('⚠️ SISTEMA OFFLINE').setDescription(`📌 **RECUERDO:** ${cachedConfig.mejorMensaje}`).setColor('#ff0000')] });
       break;
 
-    case 'noticias':
-      msg.reply("📰 **NOTICIAS:** ADN optimizado para grupos, Stats con última frase y comandos de timba revisados.");
+    case 'ayudacmd':
+      msg.reply({ embeds: [new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO').setColor('#7D26CD').addFields(
+        { name: '🎮 JUEGOS', value: '`!penal`, `!ruleta`, `!poker`, `!bingo`' },
+        { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!stats`' }
+      )] });
       break;
   }
 });
 
 async function getUser(id) {
   let u = await usersColl.findOne({ userId: id });
-  if (!u) { u = { userId: id, points: 1000 }; await usersColl.insertOne(u); }
+  if (!u) { u = { userId: id, points: 1000, lastDaily: 0 }; await usersColl.insertOne(u); }
   return u;
 }
 
