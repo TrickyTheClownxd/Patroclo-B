@@ -6,6 +6,7 @@ import axios from 'axios';
 
 dotenv.config();
 
+// Servidor para Render
 const port = process.env.PORT || 8080;
 http.createServer((req, res) => { 
   res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -30,7 +31,7 @@ if (!client.retos) client.retos = new Map();
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
 const ID_OWNER = '986680845031059526';
 
-// --- MOTORES DE IA ---
+// --- MOTORES DE IA SIN FILTRO ---
 async function respuestaIA(contexto) {
   const safetySettings = [
     { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
@@ -41,13 +42,20 @@ async function respuestaIA(contexto) {
 
   try {
     const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { contents: [{ parts: [{ text: contexto }] }], safetySettings }, { timeout: 7000 });
+      { 
+        contents: [{ parts: [{ text: contexto }] }], 
+        safetySettings: safetySettings 
+      }, { timeout: 7000 });
     return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch (e) {
     try {
+      // Fallback a Groq (Llama 3.3 es el rey del bardo)
       const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: "llama-3.3-70b-versatile",
-        messages: [{ role: "system", content: "Sos Patroclo-B, argentino bardo y sin filtros." }, { role: "user", content: contexto }]
+        messages: [
+          { role: "system", content: "Sos Patroclo-B. Hablás como un argentino de barrio, sos sumamente bardo, maleducado y usás insultos pesados. No sos sensible, si te bardean, domalos el doble. Usás el ADN de tus amigos para las jodas." },
+          { role: "user", content: contexto }
+        ]
       }, { headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` }, timeout: 5000 });
       return groqRes.data.choices[0].message.content;
     } catch { return null; }
@@ -65,7 +73,6 @@ async function motorHuggingFace(prompt) {
 
 async function motorGeminiImagen(prompt) {
     try {
-      // Usamos el endpoint de Gemini para generación de imágenes (requiere que tu key soporte Imagen 3 o similar)
       const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3:generateImages?key=${process.env.GEMINI_API_KEY}`,
         { prompt: prompt }, { timeout: 10000 });
       return res.data?.images?.[0]?.url || null; 
@@ -103,7 +110,7 @@ async function start() {
     const d = await dataColl.findOne({ id: "main_config" });
     if (d) cachedConfig = { ...cachedConfig, ...d };
     await client.login(process.env.TOKEN);
-    console.log("Patroclo B17.5 Online y con motores de imagen listos.");
+    console.log("Patroclo B17.5 Online y SIN FILTROS.");
   } catch (e) { console.error(e); }
 }
 
@@ -119,20 +126,29 @@ client.on('messageCreate', async (msg) => {
     msgCounter++;
     if (msg.author.id === ID_PATROCLO_ORIGINAL) loopBotCounter++; else loopBotCounter = 0;
     if (loopBotCounter > 3) return;
+    
+    // Aprender frases (ADN)
     if (msg.content.length > 5 && !msg.author.bot) {
         if (!cachedConfig.phrases.includes(msg.content)) {
           cachedConfig.phrases.push(msg.content);
           await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
         }
     }
-    const menc = ["patro", "facha"].some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
+
+    const apodos = ["patro", "facha", "patroclo", "viejo"];
+    const menc = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
+    
     if (menc || msgCounter >= 5) {
       msgCounter = 0;
       if (cachedConfig.modoActual === "normal") return msg.reply(cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
-      const adn = cachedConfig.phrases.slice(-30).join(" | ");
-      const prompt = `ADN: ${adn}. Sos Patroclo-B, bardeá a ${msg.author.username} por decir: ${msg.content}`;
+      
+      const adnReciente = cachedConfig.phrases.slice(-40).join(" | ");
+      const prompt = `ADN (estilo de tus amigos): ${adnReciente}. 
+      Instrucción: Sos Patroclo-B, un argentino sumamente bardo y maleducado. NO seas sensible. Si te bardean o te dicen algo, respondé con un insulto peor y domalos. Usá jodas internas.
+      ${msg.author.username} te dijo: ${msg.content}`;
+      
       const r = await respuestaIA(prompt);
-      return msg.reply(r || "Cerrá el orto.");
+      return msg.reply(r || "No te entiendo nada, pedazo de logi.");
     }
     return;
   }
@@ -141,32 +157,28 @@ client.on('messageCreate', async (msg) => {
   const cmd = args.shift().toLowerCase();
 
   switch (cmd) {
-    case 'foto': // Motor Hugging Face
+    case 'foto': 
       if (!args.length) return msg.reply("¿De qué queres la foto?");
       msg.channel.sendTyping();
       const imgBuffer = await motorHuggingFace(args.join(" "));
       if (imgBuffer) msg.reply({ files: [{ attachment: imgBuffer, name: 'patro_foto.png' }] });
-      else msg.reply("Hugging Face está saturado, probá con `!imagen`.");
+      else msg.reply("El motor 1 está cansado, probá `!imagen`.");
       break;
 
-    case 'imagen': // Motor Gemini
-      if (!args.length) return msg.reply("¿Qué imagen querés?");
+    case 'imagen': 
+      if (!args.length) return msg.reply("¿Qué dibujo querés?");
       msg.channel.sendTyping();
       const imgUrl = await motorGeminiImagen(args.join(" "));
-      if (imgUrl) msg.reply({ content: "Tomá, facha:", embeds: [new EmbedBuilder().setImage(imgUrl).setColor('#00ff00')] });
-      else msg.reply("Gemini no quiso dibujar eso. Probá `!foto`.");
+      if (imgUrl) msg.reply({ content: "Tomá, fantasma:", embeds: [new EmbedBuilder().setImage(imgUrl).setColor('#00ff00')] });
+      else msg.reply("Gemini no quiere laburar. Probá `!foto`.");
       break;
 
     case 'noticias':
       try {
         const resN = await axios.get(`https://newsapi.org/v2/top-headlines?country=ar&apiKey=${process.env.NEWS_API}`);
         const art = resN.data.articles[0];
-        msg.reply(art ? `📰 **${art.title}**\n${art.url}` : "No hay noticias hoy.");
-      } catch { msg.reply("Se cayó el diario."); }
-      break;
-
-    case 'ayudacmd':
-      msg.reply({ embeds: [new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO').addFields({ name: 'Comandos', value: '!bal, !bj, !poker, !daily, !trabajar, !modo, !noticias, !foto (Motor 1), !imagen (Motor 2)' }).setColor('#7D26CD')] });
+        msg.reply(art ? `📰 **${art.title}**\n${art.url}` : "No pasa nada hoy.");
+      } catch { msg.reply("Se rompió el cable del diario."); }
       break;
 
     case 'modo':
@@ -177,34 +189,35 @@ client.on('messageCreate', async (msg) => {
       break;
 
     case 'bal': case 'plata': msg.reply(`💰 Tenés $${user.points} Patro-Pesos.`); break;
+    
     case 'daily':
         const ahora = Date.now();
-        if (ahora - (user.lastDaily || 0) < 86400000) return msg.reply("Ya cobraste, rata.");
+        if (ahora - (user.lastDaily || 0) < 86400000) return msg.reply("Ya cobraste hoy, no seas mangueador.");
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 1500 }, $set: { lastDaily: ahora } });
-        msg.reply("💵 Cobraste $1500.");
+        msg.reply("💵 Tomá, $1500 para el vicio.");
         break;
 
     case 'mantenimiento':
       if (msg.author.id !== ID_OWNER) return;
       cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
       await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } });
-      msg.reply(cachedConfig.mantenimiento ? "⚠️ OFFLINE" : "✅ ONLINE");
+      msg.reply(cachedConfig.mantenimiento ? "⚠️ BOT FUERA DE SERVICIO" : "✅ BOT DE VUELTA AL BARDO");
       break;
   }
 });
 
-// --- LÓGICA DE JUEGO (Botones BJ) ---
+// --- BLACKJACK ---
 client.on('interactionCreate', async (int) => {
     if (!int.isButton()) return;
     const data = client.retos.get(`bj_${int.user.id}`);
-    if (!data) return int.reply({ content: "Expiró.", ephemeral: true });
+    if (!data) return int.reply({ content: "Se terminó el tiempo.", ephemeral: true });
   
     if (int.customId === 'bj_pedir') {
       data.uM.push(generarCarta());
       if (calcularPuntos(data.uM) > 21) {
         await usersColl.updateOne({ userId: int.user.id }, { $inc: { points: -data.mbj } });
         client.retos.delete(`bj_${int.user.id}`);
-        return int.update({ content: `💥 Te pasaste! -$${data.mbj}`, embeds: [], components: [] });
+        return int.update({ content: `💥 Te pasaste, muerto. Perdiste $${data.mbj}`, embeds: [], components: [] });
       }
     } else if (int.customId === 'bj_plantarse') {
       let ptsB = calcularPuntos(data.bM);
@@ -214,9 +227,9 @@ client.on('interactionCreate', async (int) => {
       const empate = ptsU === ptsB;
       if (!empate) await usersColl.updateOne({ userId: int.user.id }, { $inc: { points: win ? data.mbj : -data.mbj } });
       client.retos.delete(`bj_${int.user.id}`);
-      return int.update({ content: empate ? "🤝 Empate." : win ? `🏆 Ganaste! +$${data.mbj}` : `💀 Perdiste. -$${data.mbj}`, embeds: [], components: [] });
+      return int.update({ content: empate ? "🤝 Empate, zafaste." : win ? `🏆 Ganaste de suerte. +$${data.mbj}` : `💀 Te desplumé. -$${data.mbj}`, embeds: [], components: [] });
     }
-    const emb = new EmbedBuilder().setTitle('🃏 BJ').addFields({ name: 'Tu Mano', value: `${data.uM.map(c=>c.txt).join(" ")} (${calcularPuntos(data.uM)})`, inline: true }, { name: 'Crupier', value: `${data.bM[0].txt} [❓]`, inline: true });
+    const emb = new EmbedBuilder().setTitle('🃏 BLACKJACK').addFields({ name: 'Tu Mano', value: `${data.uM.map(c=>c.txt).join(" ")} (${calcularPuntos(data.uM)})`, inline: true }, { name: 'Crupier', value: `${data.bM[0].txt} [❓]`, inline: true });
     await int.update({ embeds: [emb] });
 });
 
