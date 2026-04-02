@@ -6,6 +6,7 @@ import axios from 'axios';
 
 dotenv.config();
 
+// Servidor para Keep-Alive
 http.createServer((req, res) => { res.write("PATROCLO B17.5 ULTRA OMEGA ONLINE"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
@@ -15,14 +16,34 @@ const client = new Client({
 
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
-let cachedConfig = { phrases: [], mantenimiento: false, modoBot: "ia", mejorMensaje: "Sin recuerdos." };
+let cachedConfig = { phrases: [], mantenimiento: false, mejorMensaje: "Sin recuerdos.", modoActual: "ia" };
 let msgCounter = 0; 
 let loopBotCounter = 0;
 if (!client.retos) client.retos = new Map();
 
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
+const ID_OWNER = '986680845031059526';
 
-// --- LÓGICA DE JUEGOS ---
+// --- MOTORES DE IA ---
+async function respuestaIA(contexto) {
+  try {
+    // Intento 1: Gemini (Principal)
+    const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      { contents: [{ parts: [{ text: contexto }] }] }, { timeout: 6000 });
+    return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  } catch (e) {
+    try {
+      // Intento 2: Groq (Llama 3)
+      const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: contexto }]
+      }, { headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` }, timeout: 5000 });
+      return groqRes.data.choices[0].message.content;
+    } catch { return null; }
+  }
+}
+
+// --- UTILIDADES ---
 const generarCarta = () => {
   const palos = ['♠️', '♥️', '♦️', '♣️'];
   const valores = [{ n: 'A', v: 11 }, { n: 'J', v: 10 }, { n: 'Q', v: 10 }, { n: 'K', v: 10 }, { n: '2', v: 2 }, { n: '3', v: 3 }, { n: '4', v: 4 }, { n: '5', v: 5 }, { n: '6', v: 6 }, { n: '7', v: 7 }, { n: '8', v: 8 }, { n: '9', v: 9 }, { n: '10', v: 10 }];
@@ -37,14 +58,7 @@ const calcularPuntos = (mano) => {
   return pts;
 };
 
-async function respuestaIA(contexto) {
-  try {
-    const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API}`,
-      { contents: [{ parts: [{ text: contexto }] }] }, { timeout: 8000 });
-    return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  } catch { return null; }
-}
-
+// --- BASE DE DATOS ---
 async function start() {
   try {
     await mongoClient.connect();
@@ -54,14 +68,15 @@ async function start() {
     const d = await dataColl.findOne({ id: "main_config" });
     if (d) cachedConfig = { ...cachedConfig, ...d };
     await client.login(process.env.TOKEN);
-  } catch (e) { console.log("Error DB"); }
+    console.log("Patroclo B17.5 Online");
+  } catch (e) { console.log("Error de inicio:", e); }
 }
 
-// --- INTERACCIONES BOTONES (Blackjack) ---
+// --- INTERACCIONES (BOTONES BLACKJACK) ---
 client.on('interactionCreate', async (int) => {
   if (!int.isButton()) return;
   const data = client.retos.get(`bj_${int.user.id}`);
-  if (!data) return int.reply({ content: "Partida no encontrada.", ephemeral: true });
+  if (!data) return int.reply({ content: "La partida expiró.", ephemeral: true });
 
   if (int.customId === 'bj_pedir') {
     data.uM.push(generarCarta());
@@ -78,12 +93,13 @@ client.on('interactionCreate', async (int) => {
     const empate = ptsU === ptsB;
     if (!empate) await usersColl.updateOne({ userId: int.user.id }, { $inc: { points: win ? data.mbj : -data.mbj } });
     client.retos.delete(`bj_${int.user.id}`);
-    return int.update({ content: empate ? "🤝 **Empate.**" : win ? `🏆 **Ganaste!** Bot tenía ${ptsB}. +$${data.mbj}` : `💀 **Perdiste.** Bot tenía ${ptsB}. -$${data.mbj}`, embeds: [], components: [] });
+    return int.update({ content: empate ? "🤝 **Empate.** No perdés nada." : win ? `🏆 **Ganaste!** El bot tenía ${ptsB}. Sumás +$${data.mbj}` : `💀 **Perdiste.** El bot tenía ${ptsB}. -$${data.mbj}`, embeds: [], components: [] });
   }
   const emb = new EmbedBuilder().setTitle('🃏 BLACKJACK').addFields({ name: 'Tu Mano', value: `${data.uM.map(c=>c.txt).join(" ")} (${calcularPuntos(data.uM)})`, inline: true }, { name: 'Crupier', value: `${data.bM[0].txt} [❓]`, inline: true }).setColor('#2b2d31');
   await int.update({ embeds: [emb] });
 });
 
+// --- MENSAJES ---
 client.on('messageCreate', async (msg) => {
   if (!msg.author || (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL)) return;
   if (msg.author.id === client.user.id) return;
@@ -91,14 +107,15 @@ client.on('messageCreate', async (msg) => {
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
-  if (cachedConfig.mantenimiento && msg.author.id !== '986680845031059526') return;
+  if (cachedConfig.mantenimiento && msg.author.id !== ID_OWNER) return;
 
-  // --- LÓGICA DE DIÁLOGO (TU INDEX ORIGINAL) ---
+  // --- LÓGICA DE ADN Y DIÁLOGO ---
   if (!msg.content.startsWith('!')) {
     msgCounter++;
     if (msg.author.id === ID_PATROCLO_ORIGINAL) loopBotCounter++; else loopBotCounter = 0;
     if (loopBotCounter > 5) return;
 
+    // Aprender frases
     if (msg.content.length > 5 && !msg.content.includes('http') && !msg.author.bot) {
       if (!cachedConfig.phrases.includes(msg.content)) {
         cachedConfig.phrases.push(msg.content);
@@ -106,15 +123,19 @@ client.on('messageCreate', async (msg) => {
       }
     }
 
-    const apodos = ["patroclo", "patroclin", "patro", "facha"];
+    const apodos = ["patroclo", "patro", "facha", "patroclin"];
     const menc = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
-    const triggerHableSolo = msgCounter >= Math.floor(Math.random() * (4 - 2) + 2);
+    const triggerHableSolo = msgCounter >= Math.floor(Math.random() * 2) + 2;
 
     if (menc || triggerHableSolo) {
       msgCounter = 0;
+      if (cachedConfig.modoActual === "normal") {
+        return msg.reply(cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)] || "Qué decís facha.");
+      }
+      
       const adn = cachedConfig.phrases.slice(-25).join(" | ");
-      const promptIA = `Sos Patroclo-B, bot argentino, bardo y facha. ADN: ${adn}. Responde corto a ${msg.author.username}: ${msg.content}`;
-      const r = await respuestaIA(promptIA);
+      const prompt = `Sos Patroclo-B, bot argentino. Modo: ${cachedConfig.modoActual}. ADN: ${adn}. Responde a ${msg.author.username}: ${msg.content}`;
+      const r = await respuestaIA(prompt);
       return msg.reply(r || cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
     }
     return;
@@ -124,26 +145,36 @@ client.on('messageCreate', async (msg) => {
   const cmd = args.shift().toLowerCase();
 
   switch (cmd) {
-    case 'stats':
-      msg.reply({ embeds: [new EmbedBuilder().setTitle('📊 STATS').setColor('#0099ff').addFields(
-        { name: '🧠 ADN', value: `${cachedConfig.phrases.length} frases`, inline: true },
-        { name: '📝 ÚLTIMA', value: `"${cachedConfig.phrases.slice(-1)}"` },
-        { name: '🏆 RECUERDO', value: cachedConfig.mejorMensaje }
+    case 'modo':
+      if (!['normal', 'serio', 'ia'].includes(args[0])) return msg.reply("Modos: `normal`, `serio`, `ia`.");
+      cachedConfig.modoActual = args[0];
+      await dataColl.updateOne({ id: "main_config" }, { $set: { modoActual: args[0] } });
+      msg.reply(`🕹️ Modo cambiado a: **${args[0].toUpperCase()}**`);
+      break;
+
+    case 'ayudacmd':
+      msg.reply({ embeds: [new EmbedBuilder().setTitle('📜 BIBLIA PATROCLO-B').setColor('#7D26CD').addFields(
+        { name: '🎮 JUEGOS', value: '`!poker`, `!bj`, `!penal`, `!ruleta`, `!bingo`' },
+        { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!trabajar`, `!reto`, `!stats`' },
+        { name: '🌌 MÍSTICA', value: '`!suerte`, `!bola8`, `!bardo`, `!acusar`' },
+        { name: '⚙️ SISTEMA', value: '`!modo`, `!mantenimiento`, `!sugerencia`, `!noticias`' }
       )] });
       break;
 
-    case 'trabajar':
-      const ahora = Date.now();
-      if (ahora - (user.lastWork || 0) < 3600000) return msg.reply("Pará un poco, esclavo. Cada 1 hora.");
-      const laburos = ["Trapito", "Admin de bardo", "Vendedor de medias", "Programador"];
-      const pago = Math.floor(Math.random() * 1500) + 500;
-      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: pago }, $set: { lastWork: ahora } });
-      msg.reply(`👷 Laburaste de **${laburos[Math.floor(Math.random()*laburos.length)]}** y te pagaron **$${pago}**.`);
+    case 'poker':
+      const apuestaP = parseInt(args[0]) || 500;
+      if (user.points < apuestaP) return msg.reply("No tenés guita.");
+      const suerteP = Math.random();
+      let winP = -apuestaP, txtP = "No tenés nada, sos malísimo.";
+      if (suerteP > 0.96) { winP = apuestaP * 5; txtP = "🔥 ¡POKER DE ASES!"; }
+      else if (suerteP > 0.8) { winP = apuestaP * 2; txtP = "🃏 Color."; }
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: winP } });
+      msg.reply(`🃏 **POKER LLAMA4**\n"${txtP}"\n${winP > 0 ? `Ganaste **$${winP}**` : `Perdiste **$${apuestaP}**`}`);
       break;
 
     case 'bj':
       const mbj = parseInt(args[0]) || 500;
-      if (user.points < mbj) return msg.reply("No tenés guita.");
+      if (user.points < mbj) return msg.reply("No tenés plata.");
       const uM = [generarCarta(), generarCarta()], bM = [generarCarta(), generarCarta()];
       client.retos.set(`bj_${msg.author.id}`, { mbj, uM, bM });
       const row = new ActionRowBuilder().addComponents(
@@ -153,45 +184,61 @@ client.on('messageCreate', async (msg) => {
       msg.reply({ embeds: [new EmbedBuilder().setTitle('🃏 BLACKJACK').addFields({ name: 'Tu Mano', value: `${uM.map(c=>c.txt).join(" ")} (${calcularPuntos(uM)})`, inline: true }, { name: 'Crupier', value: `${bM[0].txt} [❓]`, inline: true }).setColor('#2b2d31')], components: [row] });
       break;
 
-    case 'reto':
-      const mr = parseInt(args[1]) || 500;
-      if (user.points < mr) return msg.reply("No tenés un mango.");
-      if (args[0] === 'patroclo' || msg.mentions.has(client.user.id)) {
-        const winR = Math.random() > 0.65;
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: winR ? mr : -mr } });
-        return msg.reply(winR ? `🏆 Me ganaste. +$${mr}` : `💀 Te domé. -$${mr}`);
-      }
-      const op = msg.mentions.users.first();
-      if (!op) return msg.reply("!reto @user [monto]");
-      client.retos.set(op.id, { retador: msg.author.id, monto: mr });
-      msg.reply(`⚔️ ${msg.author.username} retó a ${op} por $${mr}. !aceptar.`);
+    case 'bal': case 'plata':
+      msg.reply(`💰 **Saldo de ${msg.author.username}:** $${user.points} Patro-Pesos.`);
       break;
 
-    case 'aceptar':
-      const r = client.retos.get(msg.author.id);
-      if (!r) return msg.reply("No hay retos.");
-      const g = Math.random() > 0.5 ? msg.author.id : r.retador;
-      await usersColl.updateOne({ userId: g }, { $inc: { points: r.monto } });
-      await usersColl.updateOne({ userId: g === msg.author.id ? r.retador : msg.author.id }, { $inc: { points: -r.monto } });
-      msg.channel.send(`🏆 **GANADOR:** <@${g}> se lleva $${r.monto}.`);
-      client.retos.delete(msg.author.id);
+    case 'trabajar':
+      const ahoraW = Date.now();
+      if (ahoraW - (user.lastWork || 0) < 3600000) return msg.reply("A laburar a la obra, podés cada 1 hora.");
+      const pagoW = Math.floor(Math.random() * 1500) + 500;
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: pagoW }, $set: { lastWork: ahoraW } });
+      msg.reply(`👷 Laburaste y te pagaron **$${pagoW}**.`);
       break;
 
-    case 'bingo':
-      const mb = parseInt(args[0]) || 500;
-      if (user.points < mb) return msg.reply("No tenés plata.");
-      const n = Array.from({length: 3}, () => Math.floor(Math.random() * 5));
-      const winB = n.every(val => val === n[0]);
-      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: winB ? mb * 10 : -mb } });
-      msg.reply(`🎱 [${n.join(" - ")}]. ${winB ? '¡BINGO! x10' : 'Casi.'}`);
+    case 'suerte':
+      const rs = await respuestaIA("Inventá un horóscopo bardo y disociado para hoy. Corto.");
+      msg.reply(`✨ **HORÓSCOPO:** ${rs || "Te va a ir mal."}`);
       break;
 
-    case 'bal': case 'plata': msg.reply(`💰 Tenés **$${user.points}**.`); break;
+    case 'gif':
+      try {
+        const query = args.join(" ") || "argentina bardo";
+        const resG = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${query}&limit=1&rating=g`);
+        msg.reply(resG.data.data[0]?.url || "No encontré nada.");
+      } catch { msg.reply("Error con Giphy."); }
+      break;
+
+    case 'mantenimiento':
+      if (msg.author.id !== ID_OWNER) return;
+      cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
+      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } });
+      msg.channel.send({ embeds: [new EmbedBuilder().setTitle(cachedConfig.mantenimiento ? '⚠️ SISTEMA OFFLINE' : '✅ SISTEMA ONLINE').setDescription(`📌 **RECUERDO:** ${cachedConfig.mejorMensaje}`).setColor(cachedConfig.mantenimiento ? '#ff0000' : '#00ff00')] });
+      break;
+
+    case 'stats':
+      msg.reply({ embeds: [new EmbedBuilder().setTitle('📊 STATS').setColor('#0099ff').addFields(
+        { name: '🧠 ADN', value: `${cachedConfig.phrases.length} frases`, inline: true },
+        { name: '🤖 MODO', value: cachedConfig.modoActual, inline: true },
+        { name: '🏆 RECUERDO', value: cachedConfig.mejorMensaje }
+      )] });
+      break;
+
+    case 'sugerencia':
+      if (!args.length) return msg.reply("Escribí la sugerencia.");
+      await dataColl.updateOne({ id: "sugerencias" }, { $push: { lista: { autor: msg.author.username, id: msg.author.id, texto: args.join(" "), fecha: new Date() } } }, { upsert: true });
+      msg.reply("✅ Joya, guardada.");
+      break;
+
     case 'daily':
-        const t = Date.now(); if (t - (user.lastDaily || 0) < 86400000) return msg.reply("Ya cobraste.");
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 1500 }, $set: { lastDaily: t } });
-        msg.reply("💵 Cobraste $1500.");
+        const tD = Date.now(); if (tD - (user.lastDaily || 0) < 86400000) return msg.reply("Ya cobraste.");
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 1500 }, $set: { lastDaily: tD } });
+        msg.reply("💵 Cobraste **$1500**.");
         break;
+
+    case 'noticias':
+      msg.reply("📰 **NOTICIAS:** Sistema Multi-IA Gemini/Groq activo. Modos !modo normal/serio/ia habilitados.");
+      break;
   }
 });
 
@@ -200,4 +247,5 @@ async function getUser(id) {
   if (!u) { u = { userId: id, points: 1000, lastWork: 0, lastDaily: 0 }; await usersColl.insertOne(u); }
   return u;
 }
+
 start();
