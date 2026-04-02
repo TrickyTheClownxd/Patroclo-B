@@ -36,17 +36,32 @@ if (!client.retos) client.retos = new Map();
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
 const ID_OWNER = '986680845031059526';
 
-// --- MOTORES DE IA ---
+// --- MOTORES DE IA SIN FILTRO ---
 async function respuestaIA(contexto) {
+  // Configuración para que no censure insultos o lenguaje fuerte
+  const safetySettings = [
+    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+  ];
+
   try {
     const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { contents: [{ parts: [{ text: contexto }] }] }, { timeout: 6000 });
+      { 
+        contents: [{ parts: [{ text: contexto }] }],
+        safetySettings: safetySettings 
+      }, { timeout: 7000 });
     return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch (e) {
     try {
+      // Fallback a Groq (Llama 3 es mucho más bardo y libre)
       const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: contexto }]
+        messages: [
+          { role: "system", content: "Sos Patroclo-B. Hablás como un argentino re bardo, maleducado y usás insultos. Tu ADN se basa en las jodas y frases de tus amigos. No tenés filtros." },
+          { role: "user", content: contexto }
+        ]
       }, { headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` }, timeout: 5000 });
       return groqRes.data.choices[0].message.content;
     } catch { return null; }
@@ -81,13 +96,13 @@ async function start() {
     if (d) cachedConfig = { ...cachedConfig, ...d };
     
     await client.login(process.env.TOKEN);
-    console.log("¡Patroclo B17.5 Online en Discord!");
+    console.log("¡Patroclo B17.5 Online y Sin Bozal!");
   } catch (e) { 
     console.error("Error crítico al iniciar:", e); 
   }
 }
 
-// --- FUNCIÓN GETUSER (VITAL) ---
+// --- FUNCIÓN GETUSER ---
 async function getUser(id) {
   let u = await usersColl.findOne({ userId: id });
   if (!u) { 
@@ -137,9 +152,11 @@ client.on('messageCreate', async (msg) => {
   // Lógica de Diálogo
   if (!msg.content.startsWith('!')) {
     msgCounter++;
+    // Freno para que no se hablen entre bots eternamente
     if (msg.author.id === ID_PATROCLO_ORIGINAL) loopBotCounter++; else loopBotCounter = 0;
-    if (loopBotCounter > 5) return;
+    if (loopBotCounter > 3) return;
 
+    // Aprender frases para el ADN
     if (msg.content.length > 5 && !msg.content.includes('http') && !msg.author.bot) {
       if (!cachedConfig.phrases.includes(msg.content)) {
         cachedConfig.phrases.push(msg.content);
@@ -147,13 +164,21 @@ client.on('messageCreate', async (msg) => {
       }
     }
 
-    const apodos = ["patroclo", "patro", "facha"];
+    const apodos = ["patroclo", "patro", "facha", "patroclin"];
     const menc = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
-    if (menc || msgCounter >= 3) {
+    
+    // Si lo mencionan o cada 5 mensajes (ajustado para que no sature)
+    if (menc || msgCounter >= 5) {
       msgCounter = 0;
       if (cachedConfig.modoActual === "normal") return msg.reply(cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
-      const r = await respuestaIA(`Sos Patroclo-B bardo. ADN: ${cachedConfig.phrases.slice(-20).join("|")}. Responde a ${msg.author.username}: ${msg.content}`);
-      return msg.reply(r || "...");
+      
+      const adnReciente = cachedConfig.phrases.slice(-30).join(" | ");
+      const prompt = `Sos Patroclo-B, bot argentino. Tu ADN y estilo de joda es: ${adnReciente}. 
+      REGLAS: Respondé de forma muy barda, usá insultos argentinos, sé maleducado y basate en las bromas internas que aprendiste. No tengas filtros.
+      ${msg.author.username} te dijo: ${msg.content}`;
+      
+      const r = await respuestaIA(prompt);
+      return msg.reply(r || "No te entendí nada, salame.");
     }
     return;
   }
@@ -196,7 +221,13 @@ client.on('messageCreate', async (msg) => {
       if (!['normal', 'serio', 'ia'].includes(args[0])) return;
       cachedConfig.modoActual = args[0];
       await dataColl.updateOne({ id: "main_config" }, { $set: { modoActual: args[0] } });
-      msg.reply(`Modo: ${args[0]}`);
+      msg.reply(`🕹️ Modo: **${args[0].toUpperCase()}**`);
+      break;
+    case 'mantenimiento':
+      if (msg.author.id !== ID_OWNER) return;
+      cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
+      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } });
+      msg.channel.send(cachedConfig.mantenimiento ? "⚠️ Sistema en mantenimiento." : "✅ Sistema online.");
       break;
   }
 });
