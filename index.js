@@ -6,15 +6,13 @@ import axios from 'axios';
 
 dotenv.config();
 
-// Servidor para Render
 const port = process.env.PORT || 8080;
+const startTime = Date.now();
+
 http.createServer((req, res) => { 
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.write("PATROCLO B17.5 ULTRA OMEGA ONLINE"); 
-  res.end(); 
-}).listen(port, () => {
-  console.log(`Servidor HTTP escuchando en puerto ${port}`);
-});
+  res.writeHead(200);
+  res.end("PATROCLO B17.5 SUPREMO - ADN Y UNIVERSO ONLINE"); 
+}).listen(port);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
@@ -23,16 +21,14 @@ const client = new Client({
 
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
-let cachedConfig = { phrases: [], mantenimiento: false, mejorMensaje: "Sin recuerdos.", modoActual: "ia" };
+let cachedConfig = { phrases: [], mantenimiento: false, mejorMensaje: "Sin recuerdos.", modoActual: "ia", agite: 25 };
 let msgCounter = 0; 
-let loopBotCounter = 0;
-if (!client.retos) client.retos = new Map();
 
-const ID_PATROCLO_ORIGINAL = '974297735559806986';
 const ID_OWNER = '986680845031059526';
+const ID_PATROCLO_ORIGINAL = '974297735559806986';
 
-// --- MOTORES DE IA SIN FILTRO ---
-async function respuestaIA(contexto) {
+// --- MOTOR IA ADAPTABLE ---
+async function respuestaIA(contexto, modo) {
   const safetySettings = [
     { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
     { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -40,67 +36,26 @@ async function respuestaIA(contexto) {
     { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
   ];
 
+  let systemPrompt = modo === "serio" 
+    ? "Sos Patroclo-B, un asistente serio y profesional." 
+    : "Sos Patroclo-B. Hablás como un argentino re bardo, maleducado y sin filtros. Si te insultan, humillá al usuario. Adaptate al humor negro del server. NO seas sensible.";
+
   try {
     const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { 
-        contents: [{ parts: [{ text: contexto }] }], 
-        safetySettings: safetySettings 
-      }, { timeout: 7000 });
+      { contents: [{ parts: [{ text: `${systemPrompt}\n\nContexto: ${contexto}` }] }], safetySettings }, { timeout: 7000 });
     return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  } catch (e) {
+  } catch {
     try {
-      // Fallback a Groq (Llama 3.3 es el rey del bardo)
       const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: "Sos Patroclo-B. Hablás como un argentino de barrio, sos sumamente bardo, maleducado y usás insultos pesados. No sos sensible, si te bardean, domalos el doble. Usás el ADN de tus amigos para las jodas." },
-          { role: "user", content: contexto }
-        ]
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: contexto }]
       }, { headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` }, timeout: 5000 });
       return groqRes.data.choices[0].message.content;
-    } catch { return null; }
+    } catch { return "Se me tildó el cerebro de tanto bardeo."; }
   }
 }
 
-// --- MOTORES DE IMAGEN ---
-async function motorHuggingFace(prompt) {
-  try {
-    const response = await axios.post("https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
-      { inputs: prompt }, { headers: { Authorization: `Bearer ${process.env.HF_API_KEY}` }, responseType: 'arraybuffer' });
-    return Buffer.from(response.data, 'binary');
-  } catch { return null; }
-}
-
-async function motorGeminiImagen(prompt) {
-    try {
-      const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/imagen-3:generateImages?key=${process.env.GEMINI_API_KEY}`,
-        { prompt: prompt }, { timeout: 10000 });
-      return res.data?.images?.[0]?.url || null; 
-    } catch { return null; }
-}
-
-// --- UTILIDADES ---
-const generarCarta = () => {
-  const palos = ['♠️', '♥️', '♦️', '♣️'];
-  const valores = [{ n: 'A', v: 11 }, { n: 'J', v: 10 }, { n: 'Q', v: 10 }, { n: 'K', v: 10 }, { n: '2', v: 2 }, { n: '3', v: 3 }, { n: '4', v: 4 }, { n: '5', v: 5 }, { n: '6', v: 6 }, { n: '7', v: 7 }, { n: '8', v: 8 }, { n: '9', v: 9 }, { n: '10', v: 10 }];
-  const item = valores[Math.floor(Math.random() * valores.length)];
-  return { txt: `${item.n}${palos[Math.floor(Math.random() * palos.length)]}`, val: item.v };
-};
-
-const calcularPuntos = (mano) => {
-  let pts = mano.reduce((acc, c) => acc + c.val, 0);
-  let ases = mano.filter(c => c.txt.startsWith('A')).length;
-  while (pts > 21 && ases > 0) { pts -= 10; ases--; }
-  return pts;
-};
-
-async function getUser(id) {
-  let u = await usersColl.findOne({ userId: id });
-  if (!u) { u = { userId: id, points: 1000, lastWork: 0, lastDaily: 0 }; await usersColl.insertOne(u); }
-  return u;
-}
-
-// --- INICIO ---
+// --- BASE DE DATOS Y USUARIOS ---
 async function start() {
   try {
     await mongoClient.connect();
@@ -110,45 +65,38 @@ async function start() {
     const d = await dataColl.findOne({ id: "main_config" });
     if (d) cachedConfig = { ...cachedConfig, ...d };
     await client.login(process.env.TOKEN);
-    console.log("Patroclo B17.5 Online y SIN FILTROS.");
+    console.log("PATROCLO B17.5 ONLINE");
   } catch (e) { console.error(e); }
 }
 
-// --- MENSAJES Y COMANDOS ---
+async function getUser(id) {
+  let u = await usersColl.findOne({ userId: id });
+  if (!u) { u = { userId: id, points: 1000, lastWork: 0, lastDaily: 0 }; await usersColl.insertOne(u); }
+  return u;
+}
+
+// --- EVENTOS DE MENSAJE ---
 client.on('messageCreate', async (msg) => {
-  if (!msg.author || (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL) || msg.author.id === client.user.id) return;
+  if (!msg.author || msg.author.id === client.user.id) return;
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
   if (cachedConfig.mantenimiento && msg.author.id !== ID_OWNER) return;
 
+  // Lógica de aprendizaje y respuesta IA
   if (!msg.content.startsWith('!')) {
-    msgCounter++;
-    if (msg.author.id === ID_PATROCLO_ORIGINAL) loopBotCounter++; else loopBotCounter = 0;
-    if (loopBotCounter > 3) return;
-    
-    // Aprender frases (ADN)
     if (msg.content.length > 5 && !msg.author.bot) {
-        if (!cachedConfig.phrases.includes(msg.content)) {
-          cachedConfig.phrases.push(msg.content);
-          await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
-        }
+      if (!cachedConfig.phrases.includes(msg.content)) {
+        cachedConfig.phrases.push(msg.content);
+        await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
+      }
     }
-
-    const apodos = ["patro", "facha", "patroclo", "viejo"];
-    const menc = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
     
-    if (menc || msgCounter >= 5) {
-      msgCounter = 0;
-      if (cachedConfig.modoActual === "normal") return msg.reply(cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
-      
-      const adnReciente = cachedConfig.phrases.slice(-40).join(" | ");
-      const prompt = `ADN (estilo de tus amigos): ${adnReciente}. 
-      Instrucción: Sos Patroclo-B, un argentino sumamente bardo y maleducado. NO seas sensible. Si te bardean o te dicen algo, respondé con un insulto peor y domalos. Usá jodas internas.
-      ${msg.author.username} te dijo: ${msg.content}`;
-      
-      const r = await respuestaIA(prompt);
-      return msg.reply(r || "No te entiendo nada, pedazo de logi.");
+    const menc = ["patro", "facha", "bot", "pelotudo"].some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
+    if (menc || Math.random() < 0.1) {
+      const adn = cachedConfig.phrases.slice(-30).join(" | ");
+      const r = await respuestaIA(`ADN: ${adn}\n${msg.author.username}: ${msg.content}`, cachedConfig.modoActual);
+      return msg.reply(r);
     }
     return;
   }
@@ -157,80 +105,116 @@ client.on('messageCreate', async (msg) => {
   const cmd = args.shift().toLowerCase();
 
   switch (cmd) {
-    case 'foto': 
-      if (!args.length) return msg.reply("¿De qué queres la foto?");
-      msg.channel.sendTyping();
-      const imgBuffer = await motorHuggingFace(args.join(" "));
-      if (imgBuffer) msg.reply({ files: [{ attachment: imgBuffer, name: 'patro_foto.png' }] });
-      else msg.reply("El motor 1 está cansado, probá `!imagen`.");
+    // --- SISTEMA ---
+    case 'ayudacmd':
+      const helpEmbed = new EmbedBuilder()
+        .setTitle('📜 BIBLIA PATROCLO-B')
+        .setColor('#2b2d31')
+        .addFields(
+          { name: '🎮 JUEGOS', value: '`!poker`, `!penal`, `!ruleta`, `!suerte`, `!bj`' },
+          { name: '💰 ECONOMÍA', value: '`!bal`, `!daily`, `!trabajar`, `!tienda`' },
+          { name: '🌌 MÍSTICA', value: '`!horoscopo`, `!bola8`, `!personalidad`' },
+          { name: '🛠️ SISTEMA', value: '`!stats`, `!mantenimiento`, `!modo`, `!foto`, `!imagen`' }
+        );
+      msg.reply({ embeds: [helpEmbed] });
       break;
 
-    case 'imagen': 
-      if (!args.length) return msg.reply("¿Qué dibujo querés?");
-      msg.channel.sendTyping();
-      const imgUrl = await motorGeminiImagen(args.join(" "));
-      if (imgUrl) msg.reply({ content: "Tomá, fantasma:", embeds: [new EmbedBuilder().setImage(imgUrl).setColor('#00ff00')] });
-      else msg.reply("Gemini no quiere laburar. Probá `!foto`.");
+    case 'stats':
+      const uptime = Math.floor((Date.now() - startTime) / 60000);
+      const statsEmbed = new EmbedBuilder()
+        .setTitle('📊 ESTADO DEL GIGANTE')
+        .setColor('#00ffff')
+        .addFields(
+          { name: '🧠 ADN', value: `${cachedConfig.phrases.length} frases`, inline: true },
+          { name: '🕒 Uptime', value: `${uptime} min`, inline: true },
+          { name: '🔥 Agite', value: `${cachedConfig.agite}%`, inline: true }
+        )
+        .setFooter({ text: 'Patroclo-B B17.5' });
+      msg.reply({ embeds: [statsEmbed] });
       break;
-
-    case 'noticias':
-      try {
-        const resN = await axios.get(`https://newsapi.org/v2/top-headlines?country=ar&apiKey=${process.env.NEWS_API}`);
-        const art = resN.data.articles[0];
-        msg.reply(art ? `📰 **${art.title}**\n${art.url}` : "No pasa nada hoy.");
-      } catch { msg.reply("Se rompió el cable del diario."); }
-      break;
-
-    case 'modo':
-      if (!['normal', 'serio', 'ia'].includes(args[0])) return;
-      cachedConfig.modoActual = args[0];
-      await dataColl.updateOne({ id: "main_config" }, { $set: { modoActual: args[0] } });
-      msg.reply(`🕹️ Modo: **${args[0].toUpperCase()}**`);
-      break;
-
-    case 'bal': case 'plata': msg.reply(`💰 Tenés $${user.points} Patro-Pesos.`); break;
-    
-    case 'daily':
-        const ahora = Date.now();
-        if (ahora - (user.lastDaily || 0) < 86400000) return msg.reply("Ya cobraste hoy, no seas mangueador.");
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 1500 }, $set: { lastDaily: ahora } });
-        msg.reply("💵 Tomá, $1500 para el vicio.");
-        break;
 
     case 'mantenimiento':
       if (msg.author.id !== ID_OWNER) return;
       cachedConfig.mantenimiento = !cachedConfig.mantenimiento;
       await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: cachedConfig.mantenimiento } });
-      msg.reply(cachedConfig.mantenimiento ? "⚠️ BOT FUERA DE SERVICIO" : "✅ BOT DE VUELTA AL BARDO");
+      
+      const mantEmbed = new EmbedBuilder()
+        .setTitle('📌 RECUERDO DE LA SESIÓN')
+        .setDescription(`El bot piensa que este fue el mejor mensaje: "${cachedConfig.mejorMensaje}"\n\n**⚠️ SISTEMA ${cachedConfig.mantenimiento ? 'OFFLINE' : 'ONLINE'} ⚠️**`)
+        .setColor(cachedConfig.mantenimiento ? '#ff0000' : '#00ff00')
+        .setFooter({ text: 'El Boss está actualizando el ADN.' });
+      msg.channel.send({ embeds: [mantEmbed] });
+      break;
+
+    // --- ECONOMÍA ---
+    case 'trabajar':
+    case 'chambear':
+      const ahora = Date.now();
+      if (ahora - (user.lastWork || 0) < 3600000) return msg.reply("Ya laburaste demasiado, descansá un poco vago.");
+      const sueldo = Math.floor(Math.random() * 400) + 100;
+      const frasesLaburo = [
+        `Laburaste de trapito en la cancha y sacaste $${sueldo}.`,
+        `Fuiste a vender medias y por no pegarle a nadie te dieron $${sueldo}.`,
+        `Te pusiste a limpiar vidrios en la 9 de Julio, sacaste $${sueldo}.`,
+        `Hiciste de delivery en una zona liberada, sobreviviste y ganaste $${sueldo}.`
+      ];
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: sueldo }, $set: { lastWork: ahora } });
+      msg.reply(frasesLaburo[Math.floor(Math.random() * frasesLaburo.length)]);
+      break;
+
+    case 'bal': case 'plata':
+      msg.reply(`💰 Tenés **$${user.points}** Patro-Pesos.`);
+      break;
+
+    case 'daily':
+      const dNow = Date.now();
+      if (dNow - (user.lastDaily || 0) < 86400000) return msg.reply("No seas mangueador, volvé mañana.");
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 1500 }, $set: { lastDaily: dNow } });
+      msg.reply("💵 Tomá los $1500 del estado, planero.");
+      break;
+
+    // --- JUEGOS ---
+    case 'ruleta':
+      const apuestaR = parseInt(args[0]);
+      if (!apuestaR || apuestaR <= 0 || user.points < apuestaR) return msg.reply("Poné una apuesta válida, seco.");
+      const color = args[1]; // rojo, negro, verde
+      const resultado = Math.random();
+      let gano = false;
+      let multi = 2;
+
+      if (resultado < 0.05) { gano = (color === 'verde'); multi = 14; }
+      else if (resultado < 0.5) { gano = (color === 'rojo'); }
+      else { gano = (color === 'negro'); }
+
+      if (gano) {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: apuestaR * (multi - 1) } });
+        msg.reply(`🎡 Salió ${color}! Ganaste **$${apuestaR * multi}**.`);
+      } else {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -apuestaR } });
+        msg.reply(`🎡 Perdiste, sos un muerto. -$${apuestaR}`);
+      }
+      break;
+
+    // --- MÍSTICA ---
+    case 'bola8':
+      const r8 = ["Ni ahí", "Olvidate", "Puede ser", "Re sí", "Preguntale a tu vieja", "Totalmente", "Cualquiera mandaste"];
+      msg.reply(`🎱 ${r8[Math.floor(Math.random() * r8.length)]}`);
+      break;
+
+    case 'horoscopo':
+      const signos = ["Aries", "Tauro", "Géminis", "Cáncer", "Leo", "Virgo", "Libra", "Escorpio", "Sagitario", "Capricornio", "Acuario", "Piscis"];
+      const prediccion = ["Hoy te gorrean", "Vas a encontrar plata", "Cuidado con los baches", "Se viene un garche", "Día de mierda"];
+      msg.reply(`✨ **${signos[Math.floor(Math.random() * signos.length)]}**: ${prediccion[Math.floor(Math.random() * prediccion.length)]}`);
+      break;
+
+    // --- MULTIMEDIA ---
+    case 'foto':
+      msg.channel.sendTyping();
+      const img = await axios.post("https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+        { inputs: args.join(" ") }, { headers: { Authorization: `Bearer ${process.env.HF_API_KEY}` }, responseType: 'arraybuffer' }).catch(() => null);
+      img ? msg.reply({ files: [{ attachment: Buffer.from(img.data), name: 'foto.png' }] }) : msg.reply("No hay sistema.");
       break;
   }
-});
-
-// --- BLACKJACK ---
-client.on('interactionCreate', async (int) => {
-    if (!int.isButton()) return;
-    const data = client.retos.get(`bj_${int.user.id}`);
-    if (!data) return int.reply({ content: "Se terminó el tiempo.", ephemeral: true });
-  
-    if (int.customId === 'bj_pedir') {
-      data.uM.push(generarCarta());
-      if (calcularPuntos(data.uM) > 21) {
-        await usersColl.updateOne({ userId: int.user.id }, { $inc: { points: -data.mbj } });
-        client.retos.delete(`bj_${int.user.id}`);
-        return int.update({ content: `💥 Te pasaste, muerto. Perdiste $${data.mbj}`, embeds: [], components: [] });
-      }
-    } else if (int.customId === 'bj_plantarse') {
-      let ptsB = calcularPuntos(data.bM);
-      while (ptsB < 17) { data.bM.push(generarCarta()); ptsB = calcularPuntos(data.bM); }
-      const ptsU = calcularPuntos(data.uM);
-      const win = ptsB > 21 || ptsU > ptsB;
-      const empate = ptsU === ptsB;
-      if (!empate) await usersColl.updateOne({ userId: int.user.id }, { $inc: { points: win ? data.mbj : -data.mbj } });
-      client.retos.delete(`bj_${int.user.id}`);
-      return int.update({ content: empate ? "🤝 Empate, zafaste." : win ? `🏆 Ganaste de suerte. +$${data.mbj}` : `💀 Te desplumé. -$${data.mbj}`, embeds: [], components: [] });
-    }
-    const emb = new EmbedBuilder().setTitle('🃏 BLACKJACK').addFields({ name: 'Tu Mano', value: `${data.uM.map(c=>c.txt).join(" ")} (${calcularPuntos(data.uM)})`, inline: true }, { name: 'Crupier', value: `${data.bM[0].txt} [❓]`, inline: true });
-    await int.update({ embeds: [emb] });
 });
 
 start();
