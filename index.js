@@ -6,7 +6,7 @@ import axios from 'axios';
 
 dotenv.config();
 
-http.createServer((req, res) => { res.write("PATROCLO B17.5 OMEGA GOLD ONLINE"); res.end(); }).listen(process.env.PORT || 8080);
+http.createServer((req, res) => { res.write("PATROCLO B17.5 ULTRA OMEGA ONLINE"); res.end(); }).listen(process.env.PORT || 8080);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
@@ -16,8 +16,8 @@ const client = new Client({
 const mongoClient = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl;
 let cachedConfig = { phrases: [], mantenimiento: false, modoBot: "ia", mejorMensaje: "Sin recuerdos." };
-let usuariosDistintos = new Set();
-let loopCounter = 0; // Para evitar bucles entre bots
+let msgCounter = 0; 
+let loopBotCounter = 0;
 if (!client.retos) client.retos = new Map();
 
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
@@ -40,7 +40,7 @@ const calcularPuntos = (mano) => {
 async function respuestaIA(contexto) {
   try {
     const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API}`,
-      { contents: [{ parts: [{ text: `Sos Patroclo-B, bardo y facha. ADN: ${contexto}` }] }] }, { timeout: 8000 });
+      { contents: [{ parts: [{ text: contexto }] }] }, { timeout: 8000 });
     return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch { return null; }
 }
@@ -57,19 +57,18 @@ async function start() {
   } catch (e) { console.log("Error DB"); }
 }
 
-// --- BOTONES (BLACKJACK) ---
+// --- INTERACCIONES BOTONES (Blackjack) ---
 client.on('interactionCreate', async (int) => {
   if (!int.isButton()) return;
   const data = client.retos.get(`bj_${int.user.id}`);
-  if (!data) return int.reply({ content: "No hay partida activa.", ephemeral: true });
+  if (!data) return int.reply({ content: "Partida no encontrada.", ephemeral: true });
 
   if (int.customId === 'bj_pedir') {
     data.uM.push(generarCarta());
-    const pts = calcularPuntos(data.uM);
-    if (pts > 21) {
+    if (calcularPuntos(data.uM) > 21) {
       await usersColl.updateOne({ userId: int.user.id }, { $inc: { points: -data.mbj } });
       client.retos.delete(`bj_${int.user.id}`);
-      return int.update({ content: `💥 **Te pasaste!** (${pts}). Perdiste $${data.mbj}.`, embeds: [], components: [] });
+      return int.update({ content: `💥 **Te pasaste!** Perdiste $${data.mbj}.`, embeds: [], components: [] });
     }
   } else if (int.customId === 'bj_plantarse') {
     let ptsB = calcularPuntos(data.bM);
@@ -79,41 +78,44 @@ client.on('interactionCreate', async (int) => {
     const empate = ptsU === ptsB;
     if (!empate) await usersColl.updateOne({ userId: int.user.id }, { $inc: { points: win ? data.mbj : -data.mbj } });
     client.retos.delete(`bj_${int.user.id}`);
-    return int.update({ content: empate ? "🤝 **Empate.**" : win ? `🏆 **Ganaste!** El bot tenía ${ptsB}. +$${data.mbj}` : `💀 **Perdiste.** El bot tenía ${ptsB}. -$${data.mbj}`, embeds: [], components: [] });
+    return int.update({ content: empate ? "🤝 **Empate.**" : win ? `🏆 **Ganaste!** Bot tenía ${ptsB}. +$${data.mbj}` : `💀 **Perdiste.** Bot tenía ${ptsB}. -$${data.mbj}`, embeds: [], components: [] });
   }
   const emb = new EmbedBuilder().setTitle('🃏 BLACKJACK').addFields({ name: 'Tu Mano', value: `${data.uM.map(c=>c.txt).join(" ")} (${calcularPuntos(data.uM)})`, inline: true }, { name: 'Crupier', value: `${data.bM[0].txt} [❓]`, inline: true }).setColor('#2b2d31');
   await int.update({ embeds: [emb] });
 });
 
 client.on('messageCreate', async (msg) => {
-  // Ignora bots EXCEPTO al Patroclo Original
-  if (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL) return;
+  if (!msg.author || (msg.author.bot && msg.author.id !== ID_PATROCLO_ORIGINAL)) return;
   if (msg.author.id === client.user.id) return;
 
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
+
   if (cachedConfig.mantenimiento && msg.author.id !== '986680845031059526') return;
 
-  // --- ANTIBUCLE BOTS ---
-  if (msg.author.id === ID_PATROCLO_ORIGINAL) {
-    loopCounter++;
-    if (loopCounter > 5) return; // Se calla después de 5 mensajes seguidos del otro bot
-  } else { loopCounter = 0; }
-
-  // --- ADN (Cada 3 personas o mención) ---
+  // --- LÓGICA DE DIÁLOGO (TU INDEX ORIGINAL) ---
   if (!msg.content.startsWith('!')) {
-    usuariosDistintos.add(msg.author.id);
-    if (msg.content.length > 5 && !msg.content.includes('http')) {
+    msgCounter++;
+    if (msg.author.id === ID_PATROCLO_ORIGINAL) loopBotCounter++; else loopBotCounter = 0;
+    if (loopBotCounter > 5) return;
+
+    if (msg.content.length > 5 && !msg.content.includes('http') && !msg.author.bot) {
       if (!cachedConfig.phrases.includes(msg.content)) {
         cachedConfig.phrases.push(msg.content);
         await dataColl.updateOne({ id: "main_config" }, { $push: { phrases: msg.content } }, { upsert: true });
       }
     }
-    const loLlaman = content.includes("patro") || msg.mentions?.has(client.user.id);
-    if (usuariosDistintos.size >= 3 || loLlaman) {
-      usuariosDistintos.clear();
-      const r = await respuestaIA(`ADN: ${cachedConfig.phrases.slice(-10).join("|")}. Responde a ${msg.author.username}: ${msg.content}`);
-      return msg.reply(r || "Qué decís, facha.");
+
+    const apodos = ["patroclo", "patroclin", "patro", "facha"];
+    const menc = apodos.some(a => content.includes(a)) || msg.mentions?.has(client.user.id);
+    const triggerHableSolo = msgCounter >= Math.floor(Math.random() * (4 - 2) + 2);
+
+    if (menc || triggerHableSolo) {
+      msgCounter = 0;
+      const adn = cachedConfig.phrases.slice(-25).join(" | ");
+      const promptIA = `Sos Patroclo-B, bot argentino, bardo y facha. ADN: ${adn}. Responde corto a ${msg.author.username}: ${msg.content}`;
+      const r = await respuestaIA(promptIA);
+      return msg.reply(r || cachedConfig.phrases[Math.floor(Math.random() * cachedConfig.phrases.length)]);
     }
     return;
   }
@@ -123,18 +125,20 @@ client.on('messageCreate', async (msg) => {
 
   switch (cmd) {
     case 'stats':
-      msg.reply({ embeds: [new EmbedBuilder().setTitle('📊 STATS').addFields(
+      msg.reply({ embeds: [new EmbedBuilder().setTitle('📊 STATS').setColor('#0099ff').addFields(
         { name: '🧠 ADN', value: `${cachedConfig.phrases.length} frases`, inline: true },
-        { name: '📝 ÚLTIMA', value: `"${cachedConfig.phrases.slice(-1)}"` }
-      ).setColor('#00ffcc')] });
+        { name: '📝 ÚLTIMA', value: `"${cachedConfig.phrases.slice(-1)}"` },
+        { name: '🏆 RECUERDO', value: cachedConfig.mejorMensaje }
+      )] });
       break;
 
     case 'trabajar':
       const ahora = Date.now();
       if (ahora - (user.lastWork || 0) < 3600000) return msg.reply("Pará un poco, esclavo. Cada 1 hora.");
-      const pago = Math.floor(Math.random() * 2000) + 500;
+      const laburos = ["Trapito", "Admin de bardo", "Vendedor de medias", "Programador"];
+      const pago = Math.floor(Math.random() * 1500) + 500;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: pago }, $set: { lastWork: ahora } });
-      msg.reply(`👷 Laburaste y te pagaron **$${pago}**.`);
+      msg.reply(`👷 Laburaste de **${laburos[Math.floor(Math.random()*laburos.length)]}** y te pagaron **$${pago}**.`);
       break;
 
     case 'bj':
@@ -150,17 +154,17 @@ client.on('messageCreate', async (msg) => {
       break;
 
     case 'reto':
-      const monto = parseInt(args[1]) || 500;
-      if (user.points < monto) return msg.reply("No tenés esa plata.");
+      const mr = parseInt(args[1]) || 500;
+      if (user.points < mr) return msg.reply("No tenés un mango.");
       if (args[0] === 'patroclo' || msg.mentions.has(client.user.id)) {
-        const win = Math.random() > 0.6;
-        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: win ? monto : -monto } });
-        return msg.reply(win ? `🏆 Me ganaste. +$${monto}` : `💀 Te domé. -$${monto}`);
+        const winR = Math.random() > 0.65;
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: winR ? mr : -mr } });
+        return msg.reply(winR ? `🏆 Me ganaste. +$${mr}` : `💀 Te domé. -$${mr}`);
       }
-      const oponente = msg.mentions.users.first();
-      if (!oponente) return msg.reply("Mencioná a alguien.");
-      client.retos.set(oponente.id, { retador: msg.author.id, monto });
-      msg.reply(`⚔️ ${msg.author.username} retó a ${oponente} por $${monto}. !aceptar.`);
+      const op = msg.mentions.users.first();
+      if (!op) return msg.reply("!reto @user [monto]");
+      client.retos.set(op.id, { retador: msg.author.id, monto: mr });
+      msg.reply(`⚔️ ${msg.author.username} retó a ${op} por $${mr}. !aceptar.`);
       break;
 
     case 'aceptar':
@@ -177,14 +181,17 @@ client.on('messageCreate', async (msg) => {
       const mb = parseInt(args[0]) || 500;
       if (user.points < mb) return msg.reply("No tenés plata.");
       const n = Array.from({length: 3}, () => Math.floor(Math.random() * 5));
-      const winB = n[0] === n[1] && n[1] === n[2];
+      const winB = n.every(val => val === n[0]);
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: winB ? mb * 10 : -mb } });
       msg.reply(`🎱 [${n.join(" - ")}]. ${winB ? '¡BINGO! x10' : 'Casi.'}`);
       break;
 
-    case 'noticias':
-      msg.reply("📰 **NOTICIAS:** Integrado sistema de trabajos, duelos entre bots/jugadores y Blackjack con botones.");
-      break;
+    case 'bal': case 'plata': msg.reply(`💰 Tenés **$${user.points}**.`); break;
+    case 'daily':
+        const t = Date.now(); if (t - (user.lastDaily || 0) < 86400000) return msg.reply("Ya cobraste.");
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: 1500 }, $set: { lastDaily: t } });
+        msg.reply("💵 Cobraste $1500.");
+        break;
   }
 });
 
