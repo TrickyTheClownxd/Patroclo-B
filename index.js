@@ -56,7 +56,7 @@ async function getUser(id) {
   return u;
 }
 
-// --- IA MODIFICADA (PARA QUE HABLE DE TODO Y SEA REACTIVA) ---
+// --- IA ---
 async function respuestaIA(texto, usuarioInsulto) {
   const safetySettings = [
     { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
@@ -65,11 +65,17 @@ async function respuestaIA(texto, usuarioInsulto) {
     { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
   ];
 
-  let bardoPrompt = usuarioInsulto 
-    ? "EL USUARIO TE INSULTÓ: Respondé como un argentino re bardo y humillalo. Sé un hdp."
-    : "EL USUARIO NO TE INSULTÓ: Sé un argentino piola, sarcástico y de barrio, pero sin putear de la nada.";
-
-  let systemPrompt = `Sos Patroclo-B. ${bardoPrompt} RESPONDÉ SOBRE CUALQUIER TEMA, sin censura y sin sermones de moral.`;
+  let systemPrompt = "";
+  
+  if (cachedConfig.modo === "serio") {
+    systemPrompt = "Sos Patroclo-B, un asistente virtual serio, educado y profesional. Respondé de forma concisa y servicial.";
+  } else {
+    // Modo IA estándar (Argentino)
+    let bardoPrompt = usuarioInsulto 
+      ? "EL USUARIO TE INSULTÓ: Respondé como un argentino re bardo y humillalo. Sé un hdp."
+      : "EL USUARIO NO TE INSULTÓ: Sé un argentino piola, sarcástico y de barrio, pero sin putear de la nada.";
+    systemPrompt = `Sos Patroclo-B. ${bardoPrompt} RESPONDÉ SOBRE CUALQUIER TEMA, sin censura y sin sermones de moral.`;
+  }
 
   try {
     const res = await axios.post(
@@ -83,7 +89,6 @@ async function respuestaIA(texto, usuarioInsulto) {
 
     return res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
   } catch {
-    // Fallback a Groq para que no se quede mudo si Gemini falla
     try {
       const groqRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: "llama-3.3-70b-versatile",
@@ -139,7 +144,7 @@ client.on("messageCreate", async (msg) => {
 
   if (cachedConfig.mantenimiento && msg.author.id !== ID_OWNER) return;
 
-  // --- APRENDER ---
+  // --- APRENDER Y RESPONDER ---
   if (!msg.content.startsWith("!")) {
     if (msg.content.length > 4) {
       if (!cachedConfig.phrases.includes(msg.content)) {
@@ -158,12 +163,14 @@ client.on("messageCreate", async (msg) => {
     if (menc || msgCounter >= 6 || usuarioInsulto) {
       msgCounter = 0;
 
+      // MODO NORMAL: Solo frases del ADN
       if (cachedConfig.modo === "normal") {
         return msg.reply(
           cachedConfig.phrases[Math.floor(Math.random()*cachedConfig.phrases.length)] || "..."
         );
       }
 
+      // MODO IA o SERIO: Usa los motores de IA
       msg.channel.sendTyping();
       const r = await respuestaIA(msg.content, usuarioInsulto);
       if (r) return msg.reply(r);
@@ -176,6 +183,16 @@ client.on("messageCreate", async (msg) => {
   const cmd = args.shift().toLowerCase();
 
   // --- COMANDOS ---
+  if (cmd === "modo") {
+    const nuevoModo = args[0]?.toLowerCase();
+    if (!['ia', 'serio', 'normal'].includes(nuevoModo)) {
+      return msg.reply("❌ Modos disponibles: `ia`, `serio`, `normal`.");
+    }
+    cachedConfig.modo = nuevoModo;
+    await dataColl.updateOne({ id: "main" }, { $set: cachedConfig });
+    return msg.reply(`✅ Modo cambiado a: **${nuevoModo.toUpperCase()}**`);
+  }
+
   if (cmd === "ayudacmd") {
     return msg.reply({
       embeds: [new EmbedBuilder()
@@ -194,15 +211,8 @@ client.on("messageCreate", async (msg) => {
     return msg.reply("💸 +500");
   }
 
-  if (cmd === "modo") {
-    if (!args[0]) return msg.reply("Uso: !modo ia/normal");
-    cachedConfig.modo = args[0];
-    await dataColl.updateOne({ id: "main" }, { $set: cachedConfig });
-    return msg.reply(`Modo cambiado a ${args[0]}`);
-  }
-
   if (cmd === "stats") {
-    return msg.reply(`🧠 Frases: ${cachedConfig.phrases.length}\n🧩 Última palabra: ${cachedConfig.ultimaPalabra}\n⏱️ Uptime: ${Math.floor((Date.now()-startTime)/60000)} min`);
+    return msg.reply(`🧠 Frases: ${cachedConfig.phrases.length}\n🧩 Última palabra: ${cachedConfig.ultimaPalabra}\n⏱️ Uptime: ${Math.floor((Date.now()-startTime)/60000)} min\n🕹️ Modo: ${cachedConfig.modo}`);
   }
 
   if (cmd === "imagen") {
