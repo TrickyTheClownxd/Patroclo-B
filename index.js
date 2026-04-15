@@ -15,6 +15,7 @@ http.createServer((req, res) => {
   res.end("PATROCLO B17.5 ULTRA OMEGA - SISTEMA UNIFICADO");
 }).listen(port);
 
+// --- CLIENT ---
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -33,7 +34,6 @@ let cachedConfig = {
   phrases: [],
   mantenimiento: false,
   modoActual: "ia",
-  agite: 25,
   ultimaPalabra: "ninguna"
 };
 
@@ -43,7 +43,7 @@ let loopBotCounter = 0;
 if (!client.retos) client.retos = new Map();
 
 const ID_OWNER = '986680845031059526';
-const ID_PATROCLO_ORIGINAL = '974297735559806986';
+const IDPATROCLOORIGINAL = '974297735559806986';
 
 // --- MOTOR IA ---
 async function respuestaIA(contexto, modo, usuarioInsulto) {
@@ -58,11 +58,11 @@ async function respuestaIA(contexto, modo, usuarioInsulto) {
   let systemPrompt;
 
   if (modo === "serio") {
-    systemPrompt = `Sos un asistente profesional, educado y claro.`;
+    systemPrompt = `Sos un asistente serio, educado y claro.`;
   } else {
     systemPrompt = usuarioInsulto
-      ? `Sos un argentino picante. El usuario te insultó, respondé con bardo fuerte y humillalo.`
-      : `Sos Patroclo-B, un argentino de barrio, sarcástico y canchero.`;
+      ? `Sos un argentino picante. El usuario te insultó, respondé con bardo fuerte.`
+      : `Sos Patroclo-B, un argentino de barrio sarcástico y canchero.`;
   }
 
   try {
@@ -71,8 +71,7 @@ async function respuestaIA(contexto, modo, usuarioInsulto) {
       {
         contents: [{ parts: [{ text: `${systemPrompt}\n\n${contexto}` }] }],
         safetySettings
-      },
-      { timeout: 8000 }
+      }
     );
 
     return res.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
@@ -89,16 +88,14 @@ async function respuestaIA(contexto, modo, usuarioInsulto) {
           ]
         },
         {
-          headers: {
-            Authorization: `Bearer ${process.env.GROQ_API_KEY}`
-          }
+          headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` }
         }
       );
 
       return groqRes.data.choices[0].message.content;
 
     } catch {
-      return "Se me tildó el cerebro, intentá de nuevo.";
+      return "Se me tildó el cerebro.";
     }
   }
 }
@@ -153,9 +150,15 @@ client.on('messageCreate', async (msg)=>{
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
-  if(cachedConfig.mantenimiento && msg.author.id !== ID_OWNER) return;
+  // ANTI LOOP
+  if (msg.author.id === IDPATROCLOORIGINAL) {
+    loopBotCounter++;
+    if (loopBotCounter > 3) return;
+  } else {
+    loopBotCounter = 0;
+  }
 
-  // --- APRENDIZAJE ---
+  // APRENDIZAJE
   if(!msg.content.startsWith('!')){
 
     if(msg.content.length > 4 && !cachedConfig.phrases.includes(msg.content)){
@@ -171,18 +174,19 @@ client.on('messageCreate', async (msg)=>{
 
     msgCounter++;
 
-    const insultos = ["pelotudo","boludo","puto","trolo","forro","hdp","pajero","mierda"];
+    const insultos = ["pelotudo","boludo","hdp","forro"];
     const usuarioInsulto = insultos.some(i => content.includes(i));
 
     const menc = content.includes("patro") || msg.mentions?.has(client.user.id);
 
-    if(menc || msgCounter >= 8 || (usuarioInsulto && Math.random()<0.5)){
+    if(menc || msgCounter >= 8 || usuarioInsulto){
       msgCounter = 0;
 
-      // MODO NORMAL
+      // MODO NORMAL (ADN)
       if(cachedConfig.modoActual === "normal"){
-        const r = cachedConfig.phrases[Math.floor(Math.random()*cachedConfig.phrases.length)] || "...";
-        return msg.reply(r);
+        return msg.reply(
+          cachedConfig.phrases[Math.floor(Math.random()*cachedConfig.phrases.length)] || "..."
+        );
       }
 
       msg.channel.sendTyping();
@@ -201,11 +205,17 @@ client.on('messageCreate', async (msg)=>{
     return;
   }
 
+  // --- COMANDOS ---
   const args = msg.content.slice(1).split(/\s+/);
   const cmd = args.shift().toLowerCase();
 
-  // --- COMANDOS ---
   if(cmd==="bal") return msg.reply(`💰 Tenés $${user.points}`);
+
+  if(cmd==="stats"){
+    return msg.reply(`🧠 Frases: ${cachedConfig.phrases.length}
+🕹️ Modo: ${cachedConfig.modoActual}
+⏱️ Uptime: ${Math.floor((Date.now()-startTime)/60000)} min`);
+  }
 
   if(cmd==="modo"){
     if(!['normal','serio','ia'].includes(args[0]))
@@ -233,26 +243,12 @@ client.on('messageCreate', async (msg)=>{
     return msg.reply("💵 +1500");
   }
 
-  // --- BLACKJACK ---
-  if(cmd==="bj"){
-    const apuesta = parseInt(args[0]) || 100;
-
-    const dataBJ = {
-      uM:[generarCarta(),generarCarta()],
-      bM:[generarCarta(),generarCarta()],
-      apuesta
-    };
-
-    client.retos.set(`bj_${msg.author.id}`, dataBJ);
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('bj_pedir').setLabel('Pedir').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('bj_plantarse').setLabel('Plantarse').setStyle(ButtonStyle.Secondary)
-    );
-
-    return msg.reply({
-      content:`Tus cartas: ${dataBJ.uM.map(c=>c.txt).join(" ")}`
-    });
+  // --- GIF ---
+  if(cmd==="gif"){
+    const q = args.join(" ");
+    const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${q}&limit=1`);
+    const gif = res.data.data[0]?.images?.original?.url;
+    return msg.reply(gif || "No encontré nada");
   }
 
 });
@@ -261,63 +257,13 @@ client.on('messageCreate', async (msg)=>{
 client.on('interactionCreate', async (int)=>{
   if(!int.isButton()) return;
 
-  // BLACKJACK
-  if(int.customId.startsWith("bj_")){
-    const data = client.retos.get(`bj_${int.user.id}`);
-    if(!data) return int.reply({content:"No hay partida",ephemeral:true});
-
-    if(int.customId==="bj_pedir"){
-      data.uM.push(generarCarta());
-
-      if(calcularPuntos(data.uM)>21){
-        await usersColl.updateOne({userId:int.user.id},{ $inc:{points:-data.apuesta}});
-        client.retos.delete(`bj_${int.user.id}`);
-        return int.update({content:"💀 Perdiste",components:[]});
-      }
-    }
-
-    if(int.customId==="bj_plantarse"){
-      let ptsB = calcularPuntos(data.bM);
-      while(ptsB<17){
-        data.bM.push(generarCarta());
-        ptsB = calcularPuntos(data.bM);
-      }
-
-      const ptsU = calcularPuntos(data.uM);
-
-      const win = ptsB>21 || ptsU>ptsB;
-
-      await usersColl.updateOne(
-        {userId:int.user.id},
-        { $inc:{points: win ? data.apuesta : -data.apuesta}}
-      );
-
-      client.retos.delete(`bj_${int.user.id}`);
-
-      return int.update({
-        content: win ? "🏆 Ganaste" : "💀 Perdiste",
-        components:[]
-      });
-    }
-
-    return int.update({
-      content:`Cartas: ${data.uM.map(c=>c.txt).join(" ")}`
-    });
-  }
-
-  // BOTONES GENERALES
   if(int.customId.endsWith("_salir")){
-    client.retos.delete(`${int.customId.split("_")[0]}_${int.user.id}`);
     return int.reply({content:"🚪 Saliste",ephemeral:true});
   }
 
   if(int.customId.endsWith("_seguir")){
-    return int.reply({
-      content:"🔁 Ejecutá el comando otra vez para seguir",
-      ephemeral:true
-    });
+    return int.reply({content:"🔁 Usá el comando otra vez",ephemeral:true});
   }
-
 });
 
 start();
