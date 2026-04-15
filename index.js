@@ -16,11 +16,17 @@ http.createServer((req, res) => {
 }).listen(port);
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
+  ],
   partials: [Partials.Channel, Partials.Message, Partials.User]
 });
 
 const mongoClient = new MongoClient(process.env.MONGO_URI);
+
 let usersColl, dataColl;
 
 let cachedConfig = {
@@ -41,6 +47,7 @@ const ID_PATROCLO_ORIGINAL = '974297735559806986';
 
 // --- MOTOR IA ---
 async function respuestaIA(contexto, modo, usuarioInsulto) {
+
   const safetySettings = [
     { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
     { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -48,13 +55,15 @@ async function respuestaIA(contexto, modo, usuarioInsulto) {
     { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
   ];
 
-  let bardoPrompt = usuarioInsulto
-    ? "Respondé como argentino re bardo."
-    : "Respondé con humor y sarcasmo.";
+  let systemPrompt;
 
-  let systemPrompt = modo === "serio"
-    ? "Sos un asistente serio."
-    : `Sos Patroclo-B, argentino. ${bardoPrompt}`;
+  if (modo === "serio") {
+    systemPrompt = `Sos un asistente profesional, educado y claro.`;
+  } else {
+    systemPrompt = usuarioInsulto
+      ? `Sos un argentino picante. El usuario te insultó, respondé con bardo fuerte y humillalo.`
+      : `Sos Patroclo-B, un argentino de barrio, sarcástico y canchero.`;
+  }
 
   try {
     const res = await axios.post(
@@ -71,7 +80,7 @@ async function respuestaIA(contexto, modo, usuarioInsulto) {
   } catch {
     try {
       const groqRes = await axios.post(
-        'https://api.groq.com/openai/v1/chat/completions',
+        "https://api.groq.com/openai/v1/chat/completions",
         {
           model: "llama-3.3-70b-versatile",
           messages: [
@@ -80,14 +89,16 @@ async function respuestaIA(contexto, modo, usuarioInsulto) {
           ]
         },
         {
-          headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` }
+          headers: {
+            Authorization: `Bearer ${process.env.GROQ_API_KEY}`
+          }
         }
       );
 
       return groqRes.data.choices[0].message.content;
 
     } catch {
-      return "Se me quemó el cerebro.";
+      return "Se me tildó el cerebro, intentá de nuevo.";
     }
   }
 }
@@ -96,9 +107,9 @@ async function respuestaIA(contexto, modo, usuarioInsulto) {
 const generarCarta = () => {
   const palos = ['♠️','♥️','♦️','♣️'];
   const valores = [
-    {n:'A',v:11},{n:'2',v:2},{n:'3',v:3},{n:'4',v:4},
-    {n:'5',v:5},{n:'6',v:6},{n:'7',v:7},{n:'8',v:8},
-    {n:'9',v:9},{n:'10',v:10},{n:'J',v:10},{n:'Q',v:10},{n:'K',v:10}
+    {n:'A',v:11},{n:'2',v:2},{n:'3',v:3},{n:'4',v:4},{n:'5',v:5},
+    {n:'6',v:6},{n:'7',v:7},{n:'8',v:8},{n:'9',v:9},{n:'10',v:10},
+    {n:'J',v:10},{n:'Q',v:10},{n:'K',v:10}
   ];
   const item = valores[Math.floor(Math.random()*valores.length)];
   return { txt:`${item.n}${palos[Math.floor(Math.random()*4)]}`, val:item.v };
@@ -111,42 +122,11 @@ const calcularPuntos = (mano) => {
   return pts;
 };
 
-// --- POKER ---
-function evaluarManoPoker(cartas){
-  const valores = cartas.map(c=>{
-    const v = c.txt.replace(/[^0-9AJQK]/g,'');
-    return v==='10'?'T':v;
-  });
-
-  const rankMap = {A:14,K:13,Q:12,J:11,T:10};
-  const ranks = valores.map(v=>rankMap[v]||parseInt(v));
-
-  const counts = {};
-  ranks.forEach(r=>counts[r]=(counts[r]||0)+1);
-  const countsArr = Object.values(counts).sort((a,b)=>b-a);
-
-  const sorted = [...new Set(ranks)].sort((a,b)=>a-b);
-  let straight=false;
-
-  for(let i=0;i<=sorted.length-5;i++){
-    if(sorted[i+4]-sorted[i]===4) straight=true;
-  }
-  if(!straight && [14,2,3,4,5].every(v=>sorted.includes(v))) straight=true;
-
-  if(countsArr[0]===4) return {name:'Póker',mult:10};
-  if(countsArr[0]===3 && countsArr[1]===2) return {name:'Full',mult:6};
-  if(straight) return {name:'Escalera',mult:5};
-  if(countsArr[0]===3) return {name:'Trío',mult:3};
-  if(countsArr[0]===2 && countsArr[1]===2) return {name:'Doble Par',mult:2};
-  if(countsArr[0]===2) return {name:'Par',mult:1.5};
-  return {name:'Carta alta',mult:0};
-}
-
 // --- DB ---
 async function getUser(id){
   let u = await usersColl.findOne({userId:id});
   if(!u){
-    u = {userId:id,points:1000,lastDaily:0};
+    u = { userId:id, points:1000, lastDaily:0 };
     await usersColl.insertOne(u);
   }
   return u;
@@ -155,14 +135,15 @@ async function getUser(id){
 async function start(){
   await mongoClient.connect();
   const db = mongoClient.db('patroclo_bot');
+
   usersColl = db.collection('users');
   dataColl = db.collection('bot_data');
 
   const d = await dataColl.findOne({id:"main_config"});
-  if(d) cachedConfig = {...cachedConfig,...d};
+  if(d) cachedConfig = { ...cachedConfig, ...d };
 
   await client.login(process.env.TOKEN);
-  console.log("✅ ONLINE");
+  console.log("✅ PATROCLO ONLINE");
 }
 
 // --- MENSAJES ---
@@ -172,9 +153,12 @@ client.on('messageCreate', async (msg)=>{
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
-  // APRENDER
+  if(cachedConfig.mantenimiento && msg.author.id !== ID_OWNER) return;
+
+  // --- APRENDIZAJE ---
   if(!msg.content.startsWith('!')){
-    if(msg.content.length>4 && !cachedConfig.phrases.includes(msg.content)){
+
+    if(msg.content.length > 4 && !cachedConfig.phrases.includes(msg.content)){
       cachedConfig.phrases.push(msg.content);
       cachedConfig.ultimaPalabra = msg.content.split(" ").pop();
 
@@ -187,21 +171,31 @@ client.on('messageCreate', async (msg)=>{
 
     msgCounter++;
 
+    const insultos = ["pelotudo","boludo","puto","trolo","forro","hdp","pajero","mierda"];
+    const usuarioInsulto = insultos.some(i => content.includes(i));
+
     const menc = content.includes("patro") || msg.mentions?.has(client.user.id);
 
-    if(menc || msgCounter>=8){
-      msgCounter=0;
+    if(menc || msgCounter >= 8 || (usuarioInsulto && Math.random()<0.5)){
+      msgCounter = 0;
+
+      // MODO NORMAL
+      if(cachedConfig.modoActual === "normal"){
+        const r = cachedConfig.phrases[Math.floor(Math.random()*cachedConfig.phrases.length)] || "...";
+        return msg.reply(r);
+      }
 
       msg.channel.sendTyping();
+
       const adn = cachedConfig.phrases.slice(-25).join(" | ");
 
       const r = await respuestaIA(
         `ADN: ${adn}\n${msg.author.username}: ${msg.content}`,
         cachedConfig.modoActual,
-        false
+        usuarioInsulto
       );
 
-      if(r) msg.reply(r);
+      if(r) return msg.reply(r);
     }
 
     return;
@@ -211,8 +205,20 @@ client.on('messageCreate', async (msg)=>{
   const cmd = args.shift().toLowerCase();
 
   // --- COMANDOS ---
-  if(cmd==="bal"){
-    return msg.reply(`💰 Tenés $${user.points}`);
+  if(cmd==="bal") return msg.reply(`💰 Tenés $${user.points}`);
+
+  if(cmd==="modo"){
+    if(!['normal','serio','ia'].includes(args[0]))
+      return msg.reply("Modos: normal, serio, ia");
+
+    cachedConfig.modoActual = args[0];
+
+    await dataColl.updateOne(
+      {id:"main_config"},
+      {$set:{modoActual:args[0]}}
+    );
+
+    return msg.reply(`Modo cambiado a ${args[0]}`);
   }
 
   if(cmd==="daily"){
@@ -227,32 +233,89 @@ client.on('messageCreate', async (msg)=>{
     return msg.reply("💵 +1500");
   }
 
-  // --- BINGO FIXED ---
-  if(cmd==="bingo"){
-    const monto = parseInt(args[0]) || 100;
+  // --- BLACKJACK ---
+  if(cmd==="bj"){
+    const apuesta = parseInt(args[0]) || 100;
 
-    const numeros = Array.from({length:75},(_,i)=>i+1);
-    const carton = [];
+    const dataBJ = {
+      uM:[generarCarta(),generarCarta()],
+      bM:[generarCarta(),generarCarta()],
+      apuesta
+    };
 
-    for(let i=0;i<25;i++){
-      carton.push(numeros.splice(Math.random()*numeros.length|0,1)[0]);
+    client.retos.set(`bj_${msg.author.id}`, dataBJ);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('bj_pedir').setLabel('Pedir').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('bj_plantarse').setLabel('Plantarse').setStyle(ButtonStyle.Secondary)
+    );
+
+    return msg.reply({
+      content:`Tus cartas: ${dataBJ.uM.map(c=>c.txt).join(" ")}`
+    });
+  }
+
+});
+
+// --- INTERACCIONES ---
+client.on('interactionCreate', async (int)=>{
+  if(!int.isButton()) return;
+
+  // BLACKJACK
+  if(int.customId.startsWith("bj_")){
+    const data = client.retos.get(`bj_${int.user.id}`);
+    if(!data) return int.reply({content:"No hay partida",ephemeral:true});
+
+    if(int.customId==="bj_pedir"){
+      data.uM.push(generarCarta());
+
+      if(calcularPuntos(data.uM)>21){
+        await usersColl.updateOne({userId:int.user.id},{ $inc:{points:-data.apuesta}});
+        client.retos.delete(`bj_${int.user.id}`);
+        return int.update({content:"💀 Perdiste",components:[]});
+      }
     }
 
-    const bolas = [];
-    const pool = Array.from({length:75},(_,i)=>i+1);
+    if(int.customId==="bj_plantarse"){
+      let ptsB = calcularPuntos(data.bM);
+      while(ptsB<17){
+        data.bM.push(generarCarta());
+        ptsB = calcularPuntos(data.bM);
+      }
 
-    for(let i=0;i<30;i++){
-      bolas.push(pool.splice(Math.random()*pool.length|0,1)[0]);
+      const ptsU = calcularPuntos(data.uM);
+
+      const win = ptsB>21 || ptsU>ptsB;
+
+      await usersColl.updateOne(
+        {userId:int.user.id},
+        { $inc:{points: win ? data.apuesta : -data.apuesta}}
+      );
+
+      client.retos.delete(`bj_${int.user.id}`);
+
+      return int.update({
+        content: win ? "🏆 Ganaste" : "💀 Perdiste",
+        components:[]
+      });
     }
 
-    let win=false;
+    return int.update({
+      content:`Cartas: ${data.uM.map(c=>c.txt).join(" ")}`
+    });
+  }
 
-    for(let r=0;r<5;r++){
-      const rowNums = carton.slice(r*5, r*5+5);
-      if(rowNums.every(n=>bolas.includes(n))) win=true;
-    }
+  // BOTONES GENERALES
+  if(int.customId.endsWith("_salir")){
+    client.retos.delete(`${int.customId.split("_")[0]}_${int.user.id}`);
+    return int.reply({content:"🚪 Saliste",ephemeral:true});
+  }
 
-    return msg.reply(win ? "🎉 BINGO" : "❌ Perdiste");
+  if(int.customId.endsWith("_seguir")){
+    return int.reply({
+      content:"🔁 Ejecutá el comando otra vez para seguir",
+      ephemeral:true
+    });
   }
 
 });
