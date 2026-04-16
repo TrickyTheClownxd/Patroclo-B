@@ -9,9 +9,11 @@ dotenv.config();
 
 // --- SERVER ---
 const port = process.env.PORT || 8080;
+const startTime = Date.now();
+
 http.createServer((req,res)=>{
   res.writeHead(200);
-  res.end("PATROCLO ULTRA GOD FINAL");
+  res.end("PATROCLO ULTRA FINAL GOD");
 }).listen(port);
 
 // --- CLIENT ---
@@ -37,19 +39,47 @@ if(!client.retos) client.retos = new Map();
 
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
 
+// --- UTILS ---
+const rand = (a)=>a[Math.floor(Math.random()*a.length)];
+
+// --- CARTAS REALES ---
+const cartas = [
+  "A♠️","2♠️","3♠️","4♠️","5♠️","6♠️","7♠️","8♠️","9♠️","10♠️","J♠️","Q♠️","K♠️",
+  "A♥️","2♥️","3♥️","4♥️","5♥️","6♥️","7♥️","8♥️","9♥️","10♥️","J♥️","Q♥️","K♥️"
+];
+
+const valorCarta = (c)=>{
+  if(c.startsWith("A")) return 11;
+  if(["K","Q","J"].some(x=>c.startsWith(x))) return 10;
+  return parseInt(c);
+};
+
+const puntos = (mano)=>{
+  let total = mano.reduce((a,c)=>a+valorCarta(c),0);
+  let ases = mano.filter(c=>c.startsWith("A")).length;
+
+  while(total>21 && ases>0){
+    total-=10;
+    ases--;
+  }
+  return total;
+};
+
 // --- IA ---
 async function respuestaIA(contexto, modo, usuarioInsulto){
+
   let systemPrompt;
 
   if(modo === "serio"){
-    systemPrompt = `Sos un asistente profesional, educado y claro.`;
-  } else {
+    systemPrompt = `Sos un asistente profesional, educado, claro y respetuoso.`;
+  } 
+  else if(modo === "ia"){
     systemPrompt = usuarioInsulto
-      ? `Sos un argentino picante. El usuario te insultó. Respondé con bardo fuerte sin filtro.`
-      : `Sos Patroclo, argentino de barrio, sarcástico, natural y sin filtro. Respondé cualquier tema.`;
+      ? `Sos un argentino picante. Respondé con bardo fuerte, agresivo y humillante sin filtros.`
+      : `Sos Patroclo, argentino de barrio, sarcástico, gracioso y sin filtro. Respondé natural.`;
   }
 
-  // GEMINI
+  // --- GEMINI ---
   if(cachedConfig.motorIA === "gemini"){
     try{
       const r = await axios.post(
@@ -64,11 +94,12 @@ async function respuestaIA(contexto, modo, usuarioInsulto){
           ]
         }
       );
+
       return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
     }catch{}
   }
 
-  // GROQ
+  // --- GROQ (fallback o manual) ---
   try{
     const g = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
@@ -81,9 +112,10 @@ async function respuestaIA(contexto, modo, usuarioInsulto){
       },
       {headers:{Authorization:`Bearer ${process.env.GROQ_API_KEY}`}}
     );
+
     return g.data.choices[0].message.content;
   }catch{
-    return "Se me quemó el cerebro.";
+    return "Se me quemó el cerebro boludo.";
   }
 }
 
@@ -91,13 +123,11 @@ async function respuestaIA(contexto, modo, usuarioInsulto){
 async function getUser(id){
   let u = await usersColl.findOne({userId:id});
   if(!u){
-    u = { userId:id, points:1000 };
+    u = { userId:id, points:1000, lastDaily:0 };
     await usersColl.insertOne(u);
   }
   return u;
 }
-
-const rand = (a)=>a[Math.floor(Math.random()*a.length)];
 
 // --- START ---
 async function start(){
@@ -114,7 +144,7 @@ async function start(){
   console.log("🔥 PATROCLO FINAL ONLINE");
 }
 
-// --- BOTONES BASE ---
+// --- BOTONES ---
 const botones = (juego, apuesta)=>
   new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId(`${juego}_seguir_${apuesta}`).setLabel("Seguir 🔄").setStyle(ButtonStyle.Primary),
@@ -128,13 +158,13 @@ client.on("messageCreate", async msg=>{
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
-  // ANTI LOOP
+  // --- ANTI LOOP ---
   if(msg.author.id === ID_PATROCLO_ORIGINAL){
     loopBotCounter++;
     if(loopBotCounter >= 3) return;
   } else loopBotCounter = 0;
 
-  // ADN
+  // --- ADN ---
   if(!msg.content.startsWith("!") && msg.content.length > 4){
     if(!cachedConfig.phrases.includes(msg.content)){
       cachedConfig.phrases.push(msg.content);
@@ -142,6 +172,123 @@ client.on("messageCreate", async msg=>{
     }
   }
 
+  // =================
+  // 🎮 COMANDOS
+  // =================
+  if(msg.content.startsWith("!")){
+    const args = msg.content.slice(1).split(" ");
+    const cmd = args.shift().toLowerCase();
+
+    if(cmd==="modo"){
+      cachedConfig.modoActual = args[0];
+      await dataColl.updateOne({id:"main_config"},{$set:{modoActual:args[0]}});
+      return msg.reply(`Modo: ${args[0]}`);
+    }
+
+    if(cmd==="motor"){
+      cachedConfig.motorIA = args[0];
+      await dataColl.updateOne({id:"main_config"},{$set:{motorIA:args[0]}});
+      return msg.reply(`Motor IA: ${args[0]}`);
+    }
+
+    if(cmd==="bal") return msg.reply(`💰 $${user.points}`);
+
+    if(cmd==="daily"){
+      if(Date.now()-user.lastDaily < 86400000)
+        return msg.reply("Ya cobraste hoy");
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:1500},$set:{lastDaily:Date.now()}}
+      );
+
+      return msg.reply("💵 +1500");
+    }
+
+    if(cmd==="stats"){
+      const uptime = Math.floor((Date.now()-startTime)/1000);
+      return msg.reply(
+        `🧠 Frases: ${cachedConfig.phrases.length}\n⚙️ Modo: ${cachedConfig.modoActual}\n⏱️ ${uptime}s\n💰 $${user.points}`
+      );
+    }
+
+    if(cmd==="top"){
+      const top = await usersColl.find().sort({points:-1}).limit(5).toArray();
+
+      const embed = new EmbedBuilder()
+        .setTitle("🏆 TOP PATROCLO")
+        .setDescription(top.map((u,i)=>`${i+1}. <@${u.userId}> - $${u.points}`).join("\n"));
+
+      return msg.reply({embeds:[embed]});
+    }
+
+    if(cmd==="gif"){
+      const q = args.join(" ");
+      const r = await axios.get(
+        `https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${q}&limit=1`
+      );
+      return msg.reply(r.data.data[0]?.images?.original?.url || "Nada encontrado");
+    }
+
+    // --- BLACKJACK ---
+    if(cmd==="bj"){
+      const apuesta = parseInt(args[0])||100;
+
+      const data = {
+        u:[rand(cartas),rand(cartas)],
+        b:[rand(cartas)],
+        apuesta
+      };
+
+      client.retos.set(`bj_${msg.author.id}`, data);
+
+      const embed = new EmbedBuilder()
+        .setTitle("🃏 Blackjack")
+        .setDescription(`Tus cartas: ${data.u.join(" ")} (${puntos(data.u)})`);
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("bj_pedir").setLabel("Pedir").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("bj_plantarse").setLabel("Plantarse").setStyle(ButtonStyle.Secondary)
+      );
+
+      return msg.reply({embeds:[embed],components:[row]});
+    }
+
+    // --- CASINO ---
+    const juegos = {
+      ruleta:["🔴","⚫","🟢"],
+      slots:["🍒","🍋","💎","⭐"],
+      dados:["🎲","🎲"],
+      poker:["♠️","♥️","♦️","♣️"]
+    };
+
+    if(juegos[cmd]){
+      const apuesta = parseInt(args[0])||100;
+
+      const m = await msg.reply("🎰 Girando...");
+      await new Promise(r=>setTimeout(r,1000));
+
+      const resultado = rand(juegos[cmd])+" "+rand(juegos[cmd])+" "+rand(juegos[cmd]);
+      const win = Math.random()<0.5;
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:win?apuesta:-apuesta}}
+      );
+
+      const embed = new EmbedBuilder()
+        .setTitle(`🎰 ${cmd}`)
+        .setDescription(`${resultado}\n\n${win?"🏆 Ganaste":"💀 Perdiste"} ($${apuesta})`);
+
+      return m.edit({content:null,embeds:[embed],components:[botones(cmd,apuesta)]});
+    }
+
+    return;
+  }
+
+  // =================
+  // 🤖 IA
+  // =================
   const insultos = ["pelotudo","boludo","hdp","forro"];
   const usuarioInsulto = insultos.some(i=>content.includes(i));
 
@@ -171,80 +318,6 @@ client.on("messageCreate", async msg=>{
     if(r) return msg.reply(r);
   }
 
-  if(!msg.content.startsWith("!")) return;
-
-  const args = msg.content.slice(1).split(" ");
-  const cmd = args.shift().toLowerCase();
-
-  // --- CONFIG ---
-  if(cmd==="modo"){
-    cachedConfig.modoActual = args[0];
-    await dataColl.updateOne({id:"main_config"},{$set:{modoActual:args[0]}});
-    return msg.reply(`Modo: ${args[0]}`);
-  }
-
-  if(cmd==="motor"){
-    cachedConfig.motorIA = args[0];
-    await dataColl.updateOne({id:"main_config"},{$set:{motorIA:args[0]}});
-    return msg.reply(`Motor: ${args[0]}`);
-  }
-
-  if(cmd==="stats"){
-    return msg.reply(`🧠 ${cachedConfig.phrases.length} frases\n💰 $${user.points}`);
-  }
-
-  if(cmd==="gif"){
-    const q = args.join(" ");
-    const r = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${q}&limit=1`);
-    return msg.reply(r.data.data[0]?.images?.original?.url || "Nada encontrado");
-  }
-
-  if(cmd==="foto"){
-    return msg.reply("🖼️ Conecta HuggingFace después");
-  }
-
-  // --- BLACKJACK ---
-  if(cmd==="bj"){
-    const apuesta = parseInt(args[0])||100;
-
-    const data = {
-      u:[rand([2,3,4,5,6,7,8,9,10,10,10,11]),rand([2,3,4,5,6,7,8,9,10,10,10,11])],
-      b:[rand([2,3,4,5,6,7,8,9,10,10,10,11])]
-    };
-
-    client.retos.set(`bj_${msg.author.id}`, { ...data, apuesta });
-
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("bj_pedir").setLabel("Pedir").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("bj_plantarse").setLabel("Plantarse").setStyle(ButtonStyle.Secondary)
-    );
-
-    return msg.reply({content:`🃏 Tus cartas: ${data.u.join(" ")}`,components:[row]});
-  }
-
-  // --- OTROS JUEGOS ---
-  const juegos = {
-    ruleta:()=>Math.random()<0.5,
-    slots:()=>Math.random()<0.3,
-    dados:()=>Math.random()<0.5,
-    poker:()=>Math.random()<0.4
-  };
-
-  if(juegos[cmd]){
-    const m = parseInt(args[0])||100;
-    const win = juegos[cmd]();
-
-    await usersColl.updateOne(
-      {userId:msg.author.id},
-      {$inc:{points:win?m:-m}}
-    );
-
-    return msg.reply({
-      content: win?"🏆 Ganaste":"💀 Perdiste",
-      components:[botones(cmd,m)]
-    });
-  }
-
 });
 
 // --- BOTONES ---
@@ -258,8 +331,9 @@ client.on("interactionCreate", async int=>{
     if(!data) return;
 
     if(accion==="pedir"){
-      data.u.push(rand([2,3,4,5,6,7,8,9,10,10,10,11]));
-      if(data.u.reduce((a,b)=>a+b,0)>21){
+      data.u.push(rand(cartas));
+
+      if(puntos(data.u)>21){
         await usersColl.updateOne({userId:int.user.id},{$inc:{points:-data.apuesta}});
         client.retos.delete(`bj_${int.user.id}`);
         return int.update({content:"💀 Te pasaste",components:[]});
@@ -267,11 +341,11 @@ client.on("interactionCreate", async int=>{
     }
 
     if(accion==="plantarse"){
-      while(data.b.reduce((a,b)=>a+b,0)<17){
-        data.b.push(rand([2,3,4,5,6,7,8,9,10,10,10,11]));
+      while(puntos(data.b)<17){
+        data.b.push(rand(cartas));
       }
 
-      const win = data.u.reduce((a,b)=>a+b,0) > data.b.reduce((a,b)=>a+b,0);
+      const win = puntos(data.u)>puntos(data.b);
 
       await usersColl.updateOne(
         {userId:int.user.id},
@@ -283,7 +357,9 @@ client.on("interactionCreate", async int=>{
       return int.update({content:win?"🏆 Ganaste":"💀 Perdiste",components:[]});
     }
 
-    return int.update({content:`Cartas: ${data.u.join(" ")}`});
+    return int.update({
+      content:`🃏 ${data.u.join(" ")} (${puntos(data.u)})`
+    });
   }
 
   if(accion==="salir"){
@@ -292,7 +368,6 @@ client.on("interactionCreate", async int=>{
 
   if(accion==="seguir"){
     const m = parseInt(apuesta);
-
     const win = Math.random()<0.5;
 
     await usersColl.updateOne(
