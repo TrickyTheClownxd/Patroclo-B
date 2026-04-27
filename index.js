@@ -1,9 +1,5 @@
 // --- IMPORTS ---
-import {
-  Client, GatewayIntentBits, Partials,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder
-} from 'discord.js';
-
+import { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import http from 'http';
 import dotenv from 'dotenv';
@@ -23,11 +19,7 @@ http.createServer((req,res)=>{
 
 // --- CLIENT ---
 const client = new Client({
-  intents:[
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ],
+  intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
   partials:[Partials.Channel]
 });
 
@@ -35,84 +27,65 @@ const mongoClient = new MongoClient(process.env.MONGO_URI);
 
 let usersColl, dataColl;
 
-// --- CACHE ---
+// 🔥 CONFIG BASE (NO VACÍA MONGO)
 let cachedConfig = {
-  phrases: [],
-  modoActual: "ia",
+  phrases: null,
+  modoActual: "normal",
   motorIA: "gemini"
 };
 
 let msgCounter = 0;
 
-// --- MEMORIA LOCAL ---
-let memoriaLocal = { phrases: [] };
+// --- SAFE JSON LOAD ---
+let backupMemory = { phrases: [] };
 
-try{
-  memoriaLocal = JSON.parse(fs.readFileSync("./memoria.json"));
-}catch{
-  console.log("⚠️ memoria.json no encontrada");
+try {
+  if(fs.existsSync("./memoria.json")){
+    backupMemory = JSON.parse(fs.readFileSync("./memoria.json"));
+    console.log("✅ Backup cargado");
+  } else {
+    console.log("⚠️ memoria.json no existe");
+  }
+} catch {
+  console.log("⚠️ Error leyendo backup");
 }
 
 // --- UTILS ---
 const rand = (a)=>a[Math.floor(Math.random()*a.length)];
-
-const cortar = (txt)=>{
-  if(!txt) return null;
-  return txt.length > 1900 ? txt.slice(0,1900)+"..." : txt;
-};
+const cortar = (t)=> t?.slice(0,2000);
 
 // --- IA ---
 async function respuestaIA(contexto, modo, usuarioInsulto){
 
-  let systemPrompt;
+  let systemPrompt = "";
 
   if(modo === "serio"){
-    systemPrompt = `Sos un asistente profesional, educado y claro.`;
+    systemPrompt = "Sos un asistente profesional.";
   }
   else if(modo === "ia"){
     systemPrompt = usuarioInsulto
-      ? `Sos argentino picante, bardero.`
-      : `Sos Patroclo, sarcástico y de barrio.`;
+      ? "Respondé con bardo argentino fuerte."
+      : "Sos argentino sarcástico.";
   }
   else if(modo === "normal"){
-    systemPrompt = `Seleccioná UNA frase de la lista dada. No inventes nada.`;
+    systemPrompt = "Elegí UNA frase exacta de la lista.";
   }
 
-  // GEMINI
-  if(cachedConfig.motorIA === "gemini"){
-    try{
-      const r = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-        {
-          contents:[{parts:[{text:`${systemPrompt}\n\n${contexto}`}] }]
-        }
-      );
-
-      return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    }catch{}
-  }
-
-  // GROQ fallback
   try{
-    const g = await axios.post(
-      "https://api.groq.com/openai/v1/chat/completions",
+    const r = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
-        model:"llama-3.3-70b-versatile",
-        messages:[
-          {role:"system",content:systemPrompt},
-          {role:"user",content:contexto}
-        ]
-      },
-      {headers:{Authorization:`Bearer ${process.env.GROQ_API_KEY}`}}
+        contents:[{parts:[{text:`${systemPrompt}\n${contexto}`}] }]
+      }
     );
 
-    return g.data.choices[0].message.content;
+    return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
   }catch{
-    return "Se me quemó el cerebro.";
+    return null;
   }
 }
 
-// --- DB ---
+// --- DB USER ---
 async function getUser(id){
   let u = await usersColl.findOne({userId:id});
   if(!u){
@@ -130,20 +103,28 @@ async function start(){
   usersColl = db.collection("users");
   dataColl = db.collection("bot_data");
 
-  const configDB = await dataColl.findOne({id:"main_config"});
-  if(configDB){
-    cachedConfig.modoActual = configDB.modoActual || "ia";
-    cachedConfig.motorIA = configDB.motorIA || "gemini";
+  const d = await dataColl.findOne({id:"main_config"});
+
+  if(d){
+    cachedConfig = {...cachedConfig, ...d};
+    console.log("🧠 Frases Mongo:", cachedConfig.phrases?.length || 0);
   }
 
-  const memoriaDB = await dataColl.findOne({id:"memoria_frases"});
-  if(memoriaDB?.data){
-    cachedConfig.phrases = memoriaDB.data;
-  }else{
-    cachedConfig.phrases = memoriaLocal.phrases || [];
-  }
+  // 🔥 RECUPERACIÓN SI MONGO ESTÁ VACÍO
+  if(!cachedConfig.phrases || cachedConfig.phrases.length === 0){
+    console.log("⚠️ Mongo vacío, usando backup");
 
-  console.log("🧠 Frases:", cachedConfig.phrases.length);
+    cachedConfig.phrases = backupMemory.phrases || [];
+
+    if(cachedConfig.phrases.length > 0){
+      await dataColl.updateOne(
+        {id:"main_config"},
+        {$set:{phrases:cachedConfig.phrases}},
+        {upsert:true}
+      );
+      console.log("✅ Restaurado desde backup");
+    }
+  }
 
   await client.login(process.env.TOKEN);
   console.log("🔥 PATROCLO ONLINE");
@@ -156,16 +137,22 @@ client.on("messageCreate", async msg=>{
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
-  // --- GUARDAR ADN ---
+  // --- ADN GUARDADO ---
   if(!msg.content.startsWith("!") && msg.content.length > 4){
-    await dataColl.updateOne(
-      {id:"memoria_frases"},
-      {$addToSet:{data: msg.content}},
-      {upsert:true}
-    );
+    if(!cachedConfig.phrases.includes(msg.content)){
+      cachedConfig.phrases.push(msg.content);
+
+      await dataColl.updateOne(
+        {id:"main_config"},
+        {$set:{phrases:cachedConfig.phrases}},
+        {upsert:true}
+      );
+    }
   }
 
-  // --- COMANDOS ---
+  // =================
+  // 🎮 COMANDOS
+  // =================
   if(msg.content.startsWith("!")){
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
@@ -173,45 +160,25 @@ client.on("messageCreate", async msg=>{
     if(cmd==="modo"){
       cachedConfig.modoActual = args[0];
       await dataColl.updateOne({id:"main_config"},{$set:{modoActual:args[0]}});
-      return msg.reply("Modo: " + args[0]);
+      return msg.reply(`Modo: ${args[0]}`);
     }
-
-    if(cmd==="bal") return msg.reply(`💰 $${user.points}`);
 
     if(cmd==="stats"){
-      return msg.reply(
-        `🧠 ${cachedConfig.phrases.length} frases\n⚙️ ${cachedConfig.modoActual}\n💰 $${user.points}`
-      );
-    }
-
-    // --- CASINO ---
-    if(cmd==="slots"){
-      const apuesta = parseInt(args[0])||100;
-      const icons = ["🍒","🍋","💎","⭐"];
-
-      const r = rand(icons)+" "+rand(icons)+" "+rand(icons);
-      const win = Math.random()<0.5;
-
-      await usersColl.updateOne(
-        {userId:msg.author.id},
-        {$inc:{points:win?apuesta:-apuesta}}
-      );
-
-      return msg.reply(`${r}\n${win?"🏆 Ganaste":"💀 Perdiste"}`);
+      return msg.reply(`🧠 Frases: ${cachedConfig.phrases.length}`);
     }
 
     return;
   }
 
-  // --- TRIGGERS ---
+  // =================
+  // 🤖 TRIGGERS ADN
+  // =================
   const insultos = ["pelotudo","boludo","hdp","forro","pajero"];
   const usuarioInsulto = insultos.some(i => content.includes(i));
 
   const trigger =
     msg.mentions.has(client.user.id) ||
     content.includes("patro") ||
-    content.includes("patroclo") ||
-    content.includes("patroclin") ||
     msg.reference ||
     msgCounter >= 3;
 
@@ -221,58 +188,43 @@ client.on("messageCreate", async msg=>{
   }
 
   msgCounter = 0;
+  msg.channel.sendTyping();
 
-  try{ await msg.channel.sendTyping(); }catch{}
-
-  // =========================
-  // 🧠 MODO NORMAL (GENAI ADN)
-  // =========================
+  // =================
+  // 🧠 MODO NORMAL (CLAVE)
+  // =================
   if (cachedConfig.modoActual === "normal") {
 
-    if(!cachedConfig.phrases.length){
-      return msg.reply("No tengo ADN todavía...");
-    }
-
-    const muestraADN = [...cachedConfig.phrases]
+    const muestraADN = cachedConfig.phrases
       .sort(() => 0.5 - Math.random())
       .slice(0, 50);
 
-    const promptNormal = `
-Elegí UNA frase de esta lista que mejor responda al mensaje.
-NO inventes nada.
+    const prompt = `
+Lista: ${muestraADN.join(" | ")}
 
-Frases:
-${muestraADN.join(" | ")}
+Mensaje: "${msg.content}"
 
-Mensaje:
-"${msg.content}"
+Elegí UNA frase exacta de la lista que mejor responda.
+NO inventes nada nuevo.
 `;
 
-    let r = await respuestaIA(promptNormal, "normal", false);
+    const r = await respuestaIA(prompt, "normal", false);
 
-    if(!r || r.length < 2){
-      r = rand(muestraADN);
-    }
-
-    return msg.reply(cortar(r));
+    return msg.reply(cortar(r) || rand(cachedConfig.phrases));
   }
 
-  // =========================
-  // 🤖 MODO IA / SERIO
-  // =========================
-  const adnContexto = cachedConfig.phrases.slice(-20).join(" | ");
+  // =================
+  // 🤖 IA NORMAL
+  // =================
+  const adn = cachedConfig.phrases.slice(-20).join(" | ");
 
-  const contextoIA = `
-ADN del grupo:
-${adnContexto}
-
-Usuario: ${msg.content}
-`;
-
-  const r = await respuestaIA(contextoIA, cachedConfig.modoActual, usuarioInsulto);
+  const r = await respuestaIA(
+    `ADN: ${adn}\nUsuario: ${msg.content}`,
+    cachedConfig.modoActual,
+    usuarioInsulto
+  );
 
   return msg.reply(cortar(r));
 });
 
-// --- START ---
 start();
