@@ -13,11 +13,15 @@ import fs from "fs";
 
 dotenv.config();
 
-// --- SERVER (Para que no se muera el bot) ---
-const port = process.env.PORT || 8080;
-http.createServer((req,res)=>res.end("PATROCLO GOD ONLINE")).listen(port);
+// CONFIGURACIÓN DE IDs
+const ID_PATROCLO_ORIGINAL = '974297735559806986';
+const ID_OWNER = '986680845031059526'; // @Trickyxdxd
 
-// --- MEMORIA LOCAL (Fallback) ---
+// SERVER PARA MANTENERLO VIVO
+const port = process.env.PORT || 8080;
+http.createServer((req,res)=>res.end("PATROCLO B17.5 ONLINE")).listen(port);
+
+// MEMORIA LOCAL
 function safeJSON(path, def){
     try {
         if(!fs.existsSync(path)) { fs.writeFileSync(path, JSON.stringify(def,null,2)); return def; }
@@ -27,7 +31,7 @@ function safeJSON(path, def){
 let memoria = safeJSON("./memoria.json", { chat: [], users: {} });
 function saveMem(){ fs.writeFileSync("./memoria.json", JSON.stringify(memoria,null,2)); }
 
-// --- CLIENT CONFIG ---
+// CLIENTE DISCORD
 const client = new Client({
     intents:[GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
     partials:[Partials.Channel]
@@ -38,21 +42,22 @@ let usersColl, dataColl, asociaColl;
 
 let config = { phrases: [], modoActual: "ia", motorIA: "gemini" };
 let msgCounter = 0;
+let loopBotCounter = 0; 
 if(!client.retos) client.retos = new Map();
 
-// --- UTILS ---
+// UTILS
 const rand = a => a[Math.floor(Math.random()*a.length)];
 const cortar = t => t ? t.slice(0,1900) : "";
 
-// --- MOTOR DE IA ---
+// MOTOR DE INTELIGENCIA ARTIFICIAL
 async function IA(contexto, modo, usuarioInsulto = false){
     let sys;
-    if(modo==="serio") sys="Sos un asistente profesional y educado.";
+    if(modo==="serio") sys="Sos un asistente profesional, educado y servicial.";
     else if(modo==="ia") {
         sys = usuarioInsulto 
-            ? "Sos Patroclo, argentino de barrio MUY sacado. Humillá al usuario con sarcasmo porteño y bardo." 
-            : "Sos Patroclo, argentino, sarcástico y de barrio. Respondé corto y natural.";
-    } else sys="Sos un selector de frases. Solo devolvé una frase de la lista provista que encaje. PROHIBIDO hablar vos o inventar.";
+            ? "Sos Patroclo, argentino de barrio MUY sacado. Respondé con bardo, sarcasmo y jerga porteña humillante." 
+            : "Sos Patroclo, un pibe argentino de barrio, sarcástico, gracioso y algo cínico.";
+    } else sys="Sos un selector de frases. Tu única misión es elegir una frase de la lista que encaje. NO puedes inventar nada.";
 
     if(config.motorIA==="gemini"){
         try {
@@ -64,161 +69,186 @@ async function IA(contexto, modo, usuarioInsulto = false){
                 ]
             });
             return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        } catch(e) { console.log("Error Gemini"); }
+        } catch(e) { console.log("Error en Gemini"); }
     }
     
-    // Fallback a GROQ
     try {
         const g = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
             model:"llama-3.3-70b-versatile",
             messages:[{role:"system",content:sys},{role:"user",content:contexto}]
         }, {headers:{Authorization:`Bearer ${process.env.GROQ_API_KEY}`}});
         return g.data.choices[0].message.content;
-    } catch { return "Se me quemó el cerebro, boludo."; }
+    } catch { return "Se me recalentó el procesador, boludo."; }
 }
 
-// --- DB HELPERS ---
-async function getUser(id){
-    let u = await usersColl.findOne({userId:id});
-    if(!u){ u = { userId:id, points:1000, lastDaily:0 }; await usersColl.insertOne(u); }
-    return u;
-}
-async function updateConfig(){ await dataColl.updateOne({id:"main_config"}, {$set:config}, {upsert:true}); }
-
-// --- LÓGICA DE CARTAS ---
-const generarCarta = () => {
-    const palos = ['♠️','♥️','♦️','♣️'];
-    const v = [{n:'A',v:11},{n:'2',v:2},{n:'3',v:3},{n:'4',v:4},{n:'5',v:5},{n:'6',v:6},{n:'7',v:7},{n:'8',v:8},{n:'9',v:9},{n:'10',v:10},{n:'J',v:10},{n:'Q',v:10},{n:'K',v:10}];
-    const i = rand(v); return { txt:`${i.n}${rand(palos)}`, val:i.v };
-};
-const calcularPuntos = (m) => {
-    let p = m.reduce((a,c)=>a+c.val,0); let ases = m.filter(c=>c.txt.startsWith("A")).length;
-    while(p>21 && ases>0){ p-=10; ases--; } return p;
-};
-
-// --- STARTUP ---
+// INICIO DE BASE DE DATOS Y BOT
 async function start(){
     await mongo.connect();
     const db = mongo.db("patroclo_bot");
     usersColl = db.collection("users");
     dataColl = db.collection("bot_data");
     asociaColl = db.collection("asociaciones");
+    
     const d = await dataColl.findOne({id:"main_config"});
     if(d) config = {...config,...d};
+    
     await client.login(process.env.TOKEN);
-    console.log("🔥 PATROCLO ONLINE Y CONECTADO A MONGO");
+    console.log(`🔥 PATROCLO ONLINE - ADN: ${config.phrases.length} frases.`);
 }
 
-// --- MANEJO DE MENSAJES ---
+// MANEJO DE MENSAJES
 client.on("messageCreate", async msg => {
-    if(!msg.author || msg.author.bot) return;
-    const user = await getUser(msg.author.id);
+    if(!msg.author) return;
+
+    // ANTI-LOOP PATROCLO ORIGINAL
+    if(msg.author.id === ID_PATROCLO_ORIGINAL){
+        loopBotCounter++;
+        if(loopBotCounter >= 3) return; 
+    } else if(!msg.author.bot) {
+        loopBotCounter = 0; 
+    }
+
+    if(msg.author.bot) return;
+
+    // Obtener usuario
+    let user = await usersColl.findOne({userId:msg.author.id});
+    if(!user) {
+        user = {userId:msg.author.id, points:1000};
+        await usersColl.insertOne(user);
+    }
+
     const content = msg.content.toLowerCase();
 
-    // Guardar en ADN (Mongo)
+    // GUARDAR EN EL ADN (Si es charla normal)
     if(!msg.content.startsWith("!") && msg.content.length > 5){
         if(!config.phrases.includes(msg.content)){ 
             config.phrases.push(msg.content); 
-            await updateConfig(); 
+            await dataColl.updateOne({id:"main_config"}, {$set:config}, {upsert:true}); 
         }
     }
 
-    // --- COMANDOS ---
+    // --- SECCIÓN COMANDOS ---
     if(msg.content.startsWith("!")){
         const args = msg.content.slice(1).split(" ");
         const cmd = args.shift().toLowerCase();
 
-        if(cmd==="modo"){
-            config.modoActual = args[0]; await updateConfig();
-            return msg.reply("✅ Modo cambiado a: " + args[0]);
-        }
-        if(cmd==="asocia"){
-            const p = args.join(" ").split(">");
-            if(p.length < 2) return msg.reply("Uso: !asocia clave > respuesta");
-            await asociaColl.updateOne({clave: p[0].trim().toLowerCase()}, {$set:{respuesta: p[1].trim()}}, {upsert:true});
-            return msg.reply("✅ Asociación guardada en el cerebro.");
-        }
-        if(cmd==="olvida"){
-            const t = args.join(" ");
-            config.phrases = config.phrases.filter(p => !p.toLowerCase().includes(t.toLowerCase()));
-            await updateConfig(); return msg.reply("🗑️ ADN Limpiado de ese término.");
-        }
-        if(cmd==="bal") return msg.reply(`💰 Tenés: $${user.points}`);
-        if(cmd==="stats") return msg.reply(`🧠 Frases: ${config.phrases.length}\n⚙️ Modo: ${config.modoActual}\n💰 Saldo: $${user.points}`);
-        
-        if(cmd==="gif"){
-            const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`);
-            return msg.reply(res.data.data[0]?.images?.original?.url || "No encontré nada.");
+        // Seguridad: Solo el Owner Tricky
+        if(["modo", "olvida", "asocia", "motor"].includes(cmd) && msg.author.id !== ID_OWNER){
+            return msg.reply("¿Quién te conoce? No sos Tricky, no te doy bola.");
         }
 
-        if(cmd==="foto"){
-            try {
-                const res = await axios.post("https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5", {inputs: args.join(" ")}, {headers:{Authorization:`Bearer ${process.env.HF_API_KEY}`}, responseType:'arraybuffer'});
-                return msg.reply({files:[new AttachmentBuilder(Buffer.from(res.data), {name:'foto.png'})]});
-            } catch { return msg.reply("Se me rompió el pincel."); }
+        if(cmd==="modo"){
+            config.modoActual = args[0];
+            await dataColl.updateOne({id:"main_config"}, {$set:config}, {upsert:true});
+            return msg.reply(`✅ Modo cambiado a: **${args[0]}**`);
         }
+
+        if(cmd==="asocia"){
+            const partes = args.join(" ").split(">");
+            if(partes.length < 2) return msg.reply("Uso: !asocia [palabra] > [respuesta]");
+            await asociaColl.updateOne(
+                {clave: partes[0].trim().toLowerCase()}, 
+                {$set:{respuesta: partes[1].trim()}}, 
+                {upsert:true}
+            );
+            return msg.reply("✅ Asociación grabada en el mate.");
+        }
+
+        if(cmd==="olvida"){
+            const termino = args.join(" ");
+            config.phrases = config.phrases.filter(p => !p.toLowerCase().includes(termino.toLowerCase()));
+            await dataColl.updateOne({id:"main_config"}, {$set:config}, {upsert:true});
+            return msg.reply(`🗑️ ADN Limpiado: Chau frases con "${termino}"`);
+        }
+
+        if(cmd==="bal") return msg.reply(`💰 Tu saldo es: $${user.points}`);
 
         if(cmd==="bj"){
-            const m = parseInt(args[0])||100; if(user.points < m) return msg.reply("No tenés un peso, croto.");
-            const manoU = [generarCarta(), generarCarta()]; const manoB = [generarCarta()];
-            client.retos.set(`bj_${msg.author.id}`, {monto:m, manoU, manoB});
+            const apuesta = parseInt(args[0])||100;
+            if(user.points < apuesta) return msg.reply("Andá a laburar, no tenés ni un peso.");
+            
+            const manoU = [generarCarta(), generarCarta()];
+            client.retos.set(`bj_${msg.author.id}`, {monto:apuesta, manoU, manoB:[generarCarta()]});
+            
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId("bj_pedir").setLabel("Pedir").setStyle(ButtonStyle.Primary),
                 new ButtonBuilder().setCustomId("bj_plantarse").setLabel("Plantarse").setStyle(ButtonStyle.Danger)
             );
-            return msg.reply({content:`🃏 **BLACKJACK**\nTus cartas: ${manoU.map(c=>c.txt).join(" ")} (${calcularPuntos(manoU)})`, components:[row]});
+            return msg.reply({
+                content:`🃏 **BLACKJACK**\nTu mano: ${manoU.map(c=>c.txt).join(" ")} (${calcularPuntos(manoU)})`, 
+                components:[row]
+            });
         }
         return;
     }
 
-    // --- LÓGICA DE RESPUESTAS (IA/ADN) ---
-    const insultos = ["pelotudo","boludo","hdp","forro","pajero","trolo","conchudo"];
+    // --- RESPUESTA IA / ADN ---
+    const insultos = ["pelotudo","boludo","hdp","forro","pajero","trolo","forro"];
     const usuarioInsulto = insultos.some(i => content.includes(i));
     const trigger = msg.mentions.has(client.user.id) || content.includes("patro") || msgCounter >= 4;
 
     if(!trigger){ msgCounter++; return; }
-    msgCounter = 0; msg.channel.sendTyping();
+    msgCounter = 0;
+    msg.channel.sendTyping();
 
-    // MODO NORMAL (Curador de ADN)
+    // MODO NORMAL (Filtro ADN)
     if(config.modoActual === "normal"){
         const asoc = await asociaColl.findOne({clave: content});
         if(asoc) return msg.reply(asoc.respuesta);
-        
-        const muestra = config.phrases.sort(()=>0.5-Math.random()).slice(0,40);
-        const prompt = `Lista de frases ADN: [${muestra.join(" | ")}]\n\nUsuario dice: "${msg.content}"\nResponde SOLO con la frase elegida de la lista, sin explicar nada.`;
-        const r = await IA(prompt, "normal");
-        const limpia = r.replace(/^(aquí tienes|la frase es:|respuesta:)/gi, "").trim();
+
+        const muestra = config.phrases.sort(()=>0.5-Math.random()).slice(0,45);
+        const r = await IA(`ADN frases: [${muestra.join(" | ")}]\n\nPregunta: "${msg.content}"\nElige una respuesta de la lista. SOLO LA FRASE.`, "normal");
+        const limpia = r.replace(/^(aquí tienes|respuesta:|la frase elegida es:)/gi, "").trim();
         return msg.reply(limpia || rand(config.phrases));
     }
 
     // MODO IA / SERIO
-    const res = await IA(`Usuario: ${msg.content}`, config.modoActual, usuarioInsulto);
+    const contextoFinal = `Historial chat: ${memoria.chat.slice(-5).join(" | ")}\nUsuario: ${msg.content}`;
+    const res = await IA(contextoFinal, config.modoActual, usuarioInsulto);
     return msg.reply(cortar(res));
 });
 
-// --- INTERACCIONES DE BOTONES (Blackjack) ---
+// EVENTOS DE BOTONES
 client.on("interactionCreate", async int => {
     if(!int.isButton()) return;
     const d = client.retos.get(`bj_${int.user.id}`);
-    if(!d) return int.reply({content:"Sesión expirada.", ephemeral:true});
+    if(!d) return int.reply({content:"Esa partida ya fue.", ephemeral:true});
 
     if(int.customId === "bj_pedir"){
-        d.manoU.push(generarCarta()); const p = calcularPuntos(d.manoU);
-        if(p > 21){ 
+        d.manoU.push(generarCarta());
+        const pts = calcularPuntos(d.manoU);
+        if(pts > 21){ 
             await usersColl.updateOne({userId:int.user.id}, {$inc:{points:-d.monto}});
             client.retos.delete(`bj_${int.user.id}`);
-            return int.update({content:`💀 Te pasaste con ${p}. Perdiste $${d.monto}`, components:[]});
+            return int.update({content:`💀 Te pasaste (${pts}). Perdiste $${d.monto}`, components:[]});
         }
-        return int.update({content:`🃏 **BLACKJACK**\nTus cartas: ${d.manoU.map(c=>c.txt).join(" ")} (${p})`});
+        return int.update({content:`🃏 **BLACKJACK**\nTu mano: ${d.manoU.map(c=>c.txt).join(" ")} (${pts})`});
     }
 
     if(int.customId === "bj_plantarse"){
-        let pb = calcularPuntos(d.manoB); while(pb < 17){ d.manoB.push(generarCarta()); pb = calcularPuntos(d.manoB); }
-        const pu = calcularPuntos(d.manoU); const win = pb > 21 || pu > pb; const empate = pu === pb;
-        await usersColl.updateOne({userId:int.user.id}, {$inc:{points: empate?0:(win?d.monto:-d.monto)}});
+        let pb = calcularPuntos(d.manoB);
+        while(pb < 17){ d.manoB.push(generarCarta()); pb = calcularPuntos(d.manoB); }
+        const pu = calcularPuntos(d.manoU);
+        const win = pb > 21 || pu > pb;
+        const empate = pu === pb;
+        
+        await usersColl.updateOne({userId:int.user.id}, {$inc:{points: empate ? 0 : (win ? d.monto : -d.monto)}});
         client.retos.delete(`bj_${int.user.id}`);
-        return int.update({content: empate?"⚖️ Empate.": (win?`🏆 Ganaste! El crupier tiene ${pb}. Sumás $${d.monto}` : `💀 Perdiste. El crupier tiene ${pb}. Restás $${d.monto}`), components:[]});
+        return int.update({
+            content: empate ? "⚖️ Empate, zafaste la guita." : (win ? `🏆 ¡Ganaste! Crupier tenía ${pb}. Sumás $${d.monto}` : `💀 Perdiste. Crupier tenía ${pb}. Restás $${d.monto}`),
+            components:[]
+        });
     }
 });
+
+// FUNCIONES DE JUEGO
+function generarCarta(){
+    const v = [{n:'A',v:11},{n:'2',v:2},{n:'3',v:3},{n:'4',v:4},{n:'5',v:5},{n:'6',v:6},{n:'7',v:7},{n:'8',v:8},{n:'9',v:9},{n:'10',v:10},{n:'J',v:10},{n:'Q',v:10},{n:'K',v:10}];
+    const i = rand(v); return { txt:`${i.n}${rand(['♠️','♥️','♦️','♣️'])}`, val:i.v };
+}
+function calcularPuntos(m){
+    let p = m.reduce((a,c)=>a+c.val,0); let ases = m.filter(c=>c.txt.startsWith("A")).length;
+    while(p>21 && ases>0){ p-=10; ases--; } return p;
+}
 
 start();
