@@ -1,25 +1,25 @@
 // --- IMPORTS ---
-import { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { MongoClient } from 'mongodb';
 import http from 'http';
 import dotenv from 'dotenv';
 import axios from 'axios';
-import fs from 'fs';
+import fs from "fs";
 
 dotenv.config();
 
-// --- FILES ---
-const extras = JSON.parse(fs.readFileSync("./extras.json"));
-const universe = JSON.parse(fs.readFileSync("./universe.json"));
-
 // --- SERVER ---
 const port = process.env.PORT || 8080;
-const startTime = Date.now();
+http.createServer((req,res)=>res.end("PATROCLO FINAL")).listen(port);
 
-http.createServer((req,res)=>{
-  res.writeHead(200);
-  res.end("PATROCLO GOD MODE");
-}).listen(port);
+// --- FILES ---
+const extras = JSON.parse(fs.readFileSync("./extras.json","utf-8"));
+let universe = JSON.parse(fs.readFileSync("./universe.json","utf-8"));
+let memoria = JSON.parse(fs.readFileSync("./memoria.json","utf-8"));
+
+function saveMem(){
+  fs.writeFileSync("./memoria.json", JSON.stringify(memoria,null,2));
+}
 
 // --- CLIENT ---
 const client = new Client({
@@ -27,114 +27,81 @@ const client = new Client({
   partials:[Partials.Channel]
 });
 
-const mongoClient = new MongoClient(process.env.MONGO_URI);
+const mongo = new MongoClient(process.env.MONGO_URI);
 
 let usersColl, dataColl;
 
-let cachedConfig = {
+let config = {
   phrases: [],
   modoActual: "ia",
   motorIA: "gemini"
 };
 
 let msgCounter = 0;
-let userMsgCount = new Map();
-let loopBotCounter = 0;
-
-if(!client.retos) client.retos = new Map();
-
-const ID_PATROCLO_ORIGINAL = '974297735559806986';
 
 // --- UTILS ---
-const rand = (a)=>a[Math.floor(Math.random()*a.length)];
+const rand = a=>a[Math.floor(Math.random()*a.length)];
 
-// 🔥 FIX DISCORD LIMIT
-async function enviarLargo(msg, texto){
-  if(!texto) return;
+function send(msg, text){
+  if(!text) return;
 
-  if(texto.length <= 2000) return msg.reply(texto);
-
-  const partes = texto.match(/[\s\S]{1,1900}/g);
-  for(const p of partes){
-    await msg.channel.send(p);
+  if(text.length <= 2000){
+    return msg.reply(text);
   }
+
+  text.match(/.{1,2000}/g).forEach(t=>msg.channel.send(t));
 }
 
-// --- CARTAS ---
-const cartas = [
-  "A♠️","2♠️","3♠️","4♠️","5♠️","6♠️","7♠️","8♠️","9♠️","10♠️","J♠️","Q♠️","K♠️",
-  "A♥️","2♥️","3♥️","4♥️","5♥️","6♥️","7♥️","8♥️","9♥️","10♥️","J♥️","Q♥️","K♥️"
-];
-
-const valorCarta = (c)=>{
-  if(c.startsWith("A")) return 11;
-  if(["K","Q","J"].some(x=>c.startsWith(x))) return 10;
-  return parseInt(c);
-};
-
-const puntos = (mano)=>{
-  let total = mano.reduce((a,c)=>a+valorCarta(c),0);
-  let ases = mano.filter(c=>c.startsWith("A")).length;
-
-  while(total>21 && ases>0){
-    total-=10;
-    ases--;
-  }
-  return total;
-};
-
 // --- IA ---
-async function respuestaIA(contexto, modo, usuarioInsulto){
+async function IA(contexto, modo){
 
-  let systemPrompt;
+  let sys;
 
-  if(modo === "serio"){
-    systemPrompt = `Sos un asistente profesional, claro y breve. Responde en menos de 500 palabras.`;
-  } 
-  else {
-    systemPrompt = usuarioInsulto
-      ? `Sos argentino picante. Bardeá fuerte.`
-      : `Sos Patroclo, argentino sarcástico.`;
+  if(modo==="serio"){
+    sys="Sos un asistente profesional, claro y educado.";
+  }else{
+    sys="Sos Patroclo, argentino, sarcástico, gracioso.";
   }
 
-  // GEMINI
-  if(cachedConfig.motorIA === "gemini"){
+  if(config.motorIA==="gemini"){
     try{
       const r = await axios.post(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
         {
-          contents:[{parts:[{text:`${systemPrompt}\n\n${contexto}`}] }],
-          safetySettings:[
-            {category:"HARM_CATEGORY_HARASSMENT",threshold:"BLOCK_NONE"},
-            {category:"HARM_CATEGORY_HATE_SPEECH",threshold:"BLOCK_NONE"},
-            {category:"HARM_CATEGORY_SEXUALLY_EXPLICIT",threshold:"BLOCK_NONE"},
-            {category:"HARM_CATEGORY_DANGEROUS_CONTENT",threshold:"BLOCK_NONE"}
-          ]
+          contents:[{parts:[{text:sys+"\n\n"+contexto}]}]
         }
       );
-
       return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
     }catch{}
   }
 
-  // GROQ
   try{
     const g = await axios.post(
       "https://api.groq.com/openai/v1/chat/completions",
       {
         model:"llama-3.3-70b-versatile",
         messages:[
-          {role:"system",content:systemPrompt},
+          {role:"system",content:sys},
           {role:"user",content:contexto}
         ]
       },
       {headers:{Authorization:`Bearer ${process.env.GROQ_API_KEY}`}}
     );
-
     return g.data.choices[0].message.content;
   }catch{
-    return "Me quemé 🔥";
+    return "Se me quemó el cerebro.";
   }
+}
+
+// --- MEMORIA SOCIAL ---
+function getSocial(nombre){
+  const d = memoria.users[nombre];
+  if(!d) return null;
+
+  const count = {};
+  d.forEach(x=>count[x]=(count[x]||0)+1);
+
+  return `${nombre} es ${Object.entries(count).sort((a,b)=>b[1]-a[1])[0][0]}`;
 }
 
 // --- DB ---
@@ -149,25 +116,18 @@ async function getUser(id){
 
 // --- START ---
 async function start(){
-  await mongoClient.connect();
-  const db = mongoClient.db("patroclo_bot");
+  await mongo.connect();
 
+  const db = mongo.db("patroclo_bot");
   usersColl = db.collection("users");
   dataColl = db.collection("bot_data");
 
   const d = await dataColl.findOne({id:"main_config"});
-  if(d) cachedConfig = {...cachedConfig,...d};
+  if(d) config = {...config,...d};
 
   await client.login(process.env.TOKEN);
-  console.log("🔥 ONLINE");
+  console.log("🔥 PATROCLO FINAL ONLINE");
 }
-
-// --- BOTONES ---
-const botones = (juego, apuesta)=>
-  new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`${juego}_seguir_${apuesta}`).setLabel("Seguir 🔄").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`${juego}_salir`).setLabel("Salir 🚪").setStyle(ButtonStyle.Danger)
-  );
 
 // --- MENSAJES ---
 client.on("messageCreate", async msg=>{
@@ -176,52 +136,62 @@ client.on("messageCreate", async msg=>{
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
-  // --- REACCIONES AUTO ---
-  if(extras.reacciones_auto.palabras_clave.some(p=>content.includes(p))){
-    msg.react(rand(extras.reacciones_auto.emojis)).catch(()=>{});
+  // --- GUARDAR CHAT ---
+  memoria.chat.push(`${msg.author.username}: ${msg.content}`);
+  if(memoria.chat.length > 20) memoria.chat.shift();
+  saveMem();
+
+  // --- MEMORIA SOCIAL ---
+  const m = msg.content.match(/^(\w+)\s+es\s+(.+)/i);
+  if(m){
+    const nombre = m[1].toLowerCase();
+    const desc = m[2].toLowerCase();
+
+    if(!memoria.users[nombre]) memoria.users[nombre]=[];
+    memoria.users[nombre].push(desc);
+
+    saveMem();
   }
 
+  // --- REACCIONES AUTO ---
+  extras.reacciones_auto.palabras_clave.forEach(p=>{
+    if(content.includes(p)){
+      msg.react(rand(extras.reacciones_auto.emojis)).catch(()=>{});
+    }
+  });
+
   // --- ADN ---
-  if(!msg.content.startsWith("!") && msg.content.length > 4){
-    if(!cachedConfig.phrases.includes(msg.content)){
-      cachedConfig.phrases.push(msg.content);
-      await dataColl.updateOne({id:"main_config"},{$set:cachedConfig},{upsert:true});
+  if(!msg.content.startsWith("!") && msg.content.length>4){
+    if(!config.phrases.includes(msg.content)){
+      config.phrases.push(msg.content);
+      await dataColl.updateOne({id:"main_config"},{$set:config},{upsert:true});
     }
   }
 
-  // --- CONTADOR POR USUARIO ---
-  userMsgCount.set(msg.author.id, (userMsgCount.get(msg.author.id)||0)+1);
-
-  const respondeCada3 = userMsgCount.get(msg.author.id) >= 3;
-  if(respondeCada3) userMsgCount.set(msg.author.id,0);
-
-  const trigger =
-    respondeCada3 ||
-    content.includes("patro") ||
-    content.includes("patroclo") ||
-    msg.mentions.has(client.user.id) ||
-    msg.reference;
-
-  // ================= COMANDOS =================
+  // =====================
+  // 🎮 COMANDOS
+  // =====================
   if(msg.content.startsWith("!")){
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
 
     if(cmd==="modo"){
-      cachedConfig.modoActual = args[0];
-      return msg.reply(`Modo: ${args[0]}`);
+      config.modoActual = args[0];
+      await dataColl.updateOne({id:"main_config"},{$set:{modoActual:args[0]}});
+      return msg.reply("Modo: "+args[0]);
     }
 
     if(cmd==="motor"){
-      cachedConfig.motorIA = args[0];
-      return msg.reply(`Motor: ${args[0]}`);
+      config.motorIA = args[0];
+      await dataColl.updateOne({id:"main_config"},{$set:{motorIA:args[0]}});
+      return msg.reply("Motor: "+args[0]);
     }
 
-    if(cmd==="bal") return msg.reply(`💰 $${user.points}`);
+    if(cmd==="bal") return msg.reply(`💰 ${user.points}`);
 
     if(cmd==="daily"){
       if(Date.now()-user.lastDaily < 86400000)
-        return msg.reply("Ya cobraste");
+        return msg.reply("Ya cobraste hoy");
 
       await usersColl.updateOne(
         {userId:msg.author.id},
@@ -231,39 +201,67 @@ client.on("messageCreate", async msg=>{
       return msg.reply("💵 +1500");
     }
 
-    if(cmd==="universefacts"){
-      const fact = rand(universe.facts);
-      return msg.reply(fact);
+    if(cmd==="stats"){
+      return msg.reply(
+        `🧠 Frases: ${config.phrases.length}\n⚙️ ${config.modoActual}\n💰 ${user.points}`
+      );
     }
 
     if(cmd==="gif"){
       const q = args.join(" ");
-      const r = await axios.get(
-        `https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${q}&limit=1`
-      );
+      const r = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${q}&limit=1`);
       return msg.reply(r.data.data[0]?.images?.original?.url || "Nada");
     }
 
-    if(cmd==="foto"){
-      return msg.reply("🧠 IA de imágenes próximamente");
+    if(cmd==="universefacts"){
+      return msg.reply(rand(universe.facts));
     }
 
     return;
   }
 
-  // ================= IA =================
-  if(trigger){
-    const adn = cachedConfig.phrases.slice(-20).join(" | ");
+  // =====================
+  // 🤖 TRIGGERS
+  // =====================
+  msgCounter++;
 
-    const r = await respuestaIA(
-      `ADN: ${adn}\n${msg.author.username}: ${msg.content}`,
-      cachedConfig.modoActual
+  const triggerDirecto =
+    msg.mentions.has(client.user.id) ||
+    msg.reference ||
+    /(patro|patroclo|patroclin)/i.test(content);
+
+  const triggerRandom = msgCounter >= 3;
+
+  if(triggerDirecto || triggerRandom){
+
+    msgCounter = 0;
+
+    const nombre = content.split(" ")[0];
+    const social = getSocial(nombre);
+
+    // --- MODO NORMAL (ARREGLADO) ---
+    if(config.modoActual==="normal"){
+
+      const pool = [...config.phrases, ...extras.phrases];
+
+      if(triggerDirecto && social){
+        return msg.reply(social);
+      }
+
+      return msg.reply(rand(pool));
+    }
+
+    // --- IA CON CONTEXTO ---
+    const contexto = memoria.chat.join("\n");
+
+    const r = await IA(
+      `Contexto:\n${contexto}\n\nMensaje: ${msg.content}`,
+      config.modoActual
     );
 
-    return enviarLargo(msg, r + " " + rand(extras.emojis));
+    return send(msg,r);
   }
 
 });
 
-// --- START ---
 start();
