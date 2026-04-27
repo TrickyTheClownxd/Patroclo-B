@@ -18,7 +18,7 @@ const startTime = Date.now();
 
 http.createServer((req,res)=>{
   res.writeHead(200);
-  res.end("PATROCLO GOD ONLINE");
+  res.end("PATROCLO GOD");
 }).listen(port);
 
 // --- CLIENT ---
@@ -43,15 +43,14 @@ let cachedConfig = {
 };
 
 let msgCounter = 0;
-let loopBotCounter = 0;
 
-// --- MEMORIA LOCAL (fallback) ---
+// --- MEMORIA LOCAL ---
 let memoriaLocal = { phrases: [] };
 
 try{
   memoriaLocal = JSON.parse(fs.readFileSync("./memoria.json"));
 }catch{
-  console.log("⚠️ memoria.json no existe");
+  console.log("⚠️ memoria.json no encontrada");
 }
 
 // --- UTILS ---
@@ -59,7 +58,7 @@ const rand = (a)=>a[Math.floor(Math.random()*a.length)];
 
 const cortar = (txt)=>{
   if(!txt) return null;
-  return txt.length > 1900 ? txt.slice(0,1900) + "..." : txt;
+  return txt.length > 1900 ? txt.slice(0,1900)+"..." : txt;
 };
 
 // --- IA ---
@@ -69,14 +68,14 @@ async function respuestaIA(contexto, modo, usuarioInsulto){
 
   if(modo === "serio"){
     systemPrompt = `Sos un asistente profesional, educado y claro.`;
-  } 
-  else if(modo === "normal"){
-    systemPrompt = `Respondé usando frases del grupo, estilo interno.`;
   }
-  else{
+  else if(modo === "ia"){
     systemPrompt = usuarioInsulto
       ? `Sos argentino picante, bardero.`
       : `Sos Patroclo, sarcástico y de barrio.`;
+  }
+  else if(modo === "normal"){
+    systemPrompt = `Seleccioná UNA frase de la lista dada. No inventes nada.`;
   }
 
   // GEMINI
@@ -88,6 +87,7 @@ async function respuestaIA(contexto, modo, usuarioInsulto){
           contents:[{parts:[{text:`${systemPrompt}\n\n${contexto}`}] }]
         }
       );
+
       return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
     }catch{}
   }
@@ -130,14 +130,12 @@ async function start(){
   usersColl = db.collection("users");
   dataColl = db.collection("bot_data");
 
-  // config
   const configDB = await dataColl.findOne({id:"main_config"});
   if(configDB){
     cachedConfig.modoActual = configDB.modoActual || "ia";
     cachedConfig.motorIA = configDB.motorIA || "gemini";
   }
 
-  // memoria
   const memoriaDB = await dataColl.findOne({id:"memoria_frases"});
   if(memoriaDB?.data){
     cachedConfig.phrases = memoriaDB.data;
@@ -151,13 +149,6 @@ async function start(){
   console.log("🔥 PATROCLO ONLINE");
 }
 
-// --- BOTONES ---
-const botones = (juego, apuesta)=>
-  new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`${juego}_seguir_${apuesta}`).setLabel("Seguir 🔄").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`${juego}_salir`).setLabel("Salir 🚪").setStyle(ButtonStyle.Danger)
-  );
-
 // --- MENSAJES ---
 client.on("messageCreate", async msg=>{
   if(!msg.author || msg.author.bot) return;
@@ -165,7 +156,7 @@ client.on("messageCreate", async msg=>{
   const user = await getUser(msg.author.id);
   const content = msg.content.toLowerCase();
 
-  // --- ADN GUARDADO ---
+  // --- GUARDAR ADN ---
   if(!msg.content.startsWith("!") && msg.content.length > 4){
     await dataColl.updateOne(
       {id:"memoria_frases"},
@@ -212,62 +203,76 @@ client.on("messageCreate", async msg=>{
     return;
   }
 
-  // --- TRIGGERS ADN ---
+  // --- TRIGGERS ---
+  const insultos = ["pelotudo","boludo","hdp","forro","pajero"];
+  const usuarioInsulto = insultos.some(i => content.includes(i));
+
   const trigger =
     msg.mentions.has(client.user.id) ||
     content.includes("patro") ||
+    content.includes("patroclo") ||
+    content.includes("patroclin") ||
     msg.reference ||
     msgCounter >= 3;
 
-  msgCounter++;
-
-  if(!trigger) return;
+  if (!trigger) {
+    msgCounter++;
+    return;
+  }
 
   msgCounter = 0;
 
-  // --- MODO NORMAL (IA + ADN) ---
-  if(cachedConfig.modoActual === "normal"){
+  try{ await msg.channel.sendTyping(); }catch{}
 
-    const base = cachedConfig.phrases.slice(-200);
+  // =========================
+  // 🧠 MODO NORMAL (GENAI ADN)
+  // =========================
+  if (cachedConfig.modoActual === "normal") {
 
-    const r = await respuestaIA(
-      `Elegí una frase del ADN que responda a:\n${msg.content}\n\n${base.join("\n")}`,
-      "normal",
-      false
-    );
+    if(!cachedConfig.phrases.length){
+      return msg.reply("No tengo ADN todavía...");
+    }
+
+    const muestraADN = [...cachedConfig.phrases]
+      .sort(() => 0.5 - Math.random())
+      .slice(0, 50);
+
+    const promptNormal = `
+Elegí UNA frase de esta lista que mejor responda al mensaje.
+NO inventes nada.
+
+Frases:
+${muestraADN.join(" | ")}
+
+Mensaje:
+"${msg.content}"
+`;
+
+    let r = await respuestaIA(promptNormal, "normal", false);
+
+    if(!r || r.length < 2){
+      r = rand(muestraADN);
+    }
 
     return msg.reply(cortar(r));
   }
 
-  // --- IA NORMAL ---
-  const r = await respuestaIA(msg.content, cachedConfig.modoActual, false);
+  // =========================
+  // 🤖 MODO IA / SERIO
+  // =========================
+  const adnContexto = cachedConfig.phrases.slice(-20).join(" | ");
+
+  const contextoIA = `
+ADN del grupo:
+${adnContexto}
+
+Usuario: ${msg.content}
+`;
+
+  const r = await respuestaIA(contextoIA, cachedConfig.modoActual, usuarioInsulto);
+
   return msg.reply(cortar(r));
 });
 
-// --- BOTONES ---
-client.on("interactionCreate", async int=>{
-  if(!int.isButton()) return;
-
-  const [juego,accion,apuesta] = int.customId.split("_");
-
-  if(accion==="seguir"){
-    const m = parseInt(apuesta);
-    const win = Math.random()<0.5;
-
-    await usersColl.updateOne(
-      {userId:int.user.id},
-      {$inc:{points:win?m:-m}}
-    );
-
-    return int.reply({
-      content: win?"🏆 Ganaste":"💀 Perdiste",
-      components:[botones(juego,m)]
-    });
-  }
-
-  if(accion==="salir"){
-    return int.reply({content:"🚪 Saliste",ephemeral:true});
-  }
-});
-
+// --- START ---
 start();
