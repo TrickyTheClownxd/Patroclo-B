@@ -1,5 +1,5 @@
 // ==========================================
-// PATROCLO ULTRA FINAL GOD - index.js (FIXED)
+// PATROCLO ULTRA FINAL GOD - index.js (UNIFICADO)
 // ==========================================
 import { 
     Client, GatewayIntentBits, Partials, 
@@ -13,12 +13,15 @@ import fs from "fs";
 
 dotenv.config();
 
+// CONFIGURACIÓN DE SEGURIDAD
 const ID_PATROCLO_ORIGINAL = '974297735559806986';
-const ID_OWNER = '986680845031059526'; 
+const ID_OWNER = '986680845031059526'; // @Trickyxdxd
 
+// SERVER (Mantenimiento)
 const port = process.env.PORT || 8080;
 http.createServer((req,res)=>res.end("PATROCLO B17.5 ONLINE")).listen(port);
 
+// MEMORIA LOCAL (Fallback)
 function safeJSON(path, def){
     try {
         if(!fs.existsSync(path)) { fs.writeFileSync(path, JSON.stringify(def,null,2)); return def; }
@@ -26,8 +29,8 @@ function safeJSON(path, def){
     } catch { return def; }
 }
 let memoria = safeJSON("./memoria.json", { chat: [], users: {} });
-function saveMem(){ fs.writeFileSync("./memoria.json", JSON.stringify(memoria,null,2)); }
 
+// CLIENTE DISCORD
 const client = new Client({
     intents:[GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
     partials:[Partials.Channel]
@@ -41,18 +44,19 @@ let msgCounter = 0;
 let loopBotCounter = 0; 
 if(!client.retos) client.retos = new Map();
 
+// UTILS
 const rand = a => a[Math.floor(Math.random()*a.length)];
 const cortar = t => t ? t.slice(0,1900) : "";
 
-// --- IA ENGINE CON SALVAVIDAS ---
+// --- MOTOR DE IA CON SALVAVIDAS ---
 async function IA(contexto, modo, usuarioInsulto = false){
     let sys;
-    if(modo==="serio") sys="Sos un asistente profesional.";
+    if(modo==="serio") sys="Sos un asistente profesional porteño.";
     else if(modo==="ia") {
         sys = usuarioInsulto 
-            ? "Sos Patroclo, argentino de barrio sacado. Respondé con bardo y sarcasmo." 
+            ? "Sos Patroclo, argentino sacado. Respondé con bardo, sarcasmo y jerga de barrio porteño." 
             : "Sos Patroclo, pibe argentino, sarcástico y gracioso.";
-    } else sys="Elegí UNA frase de la lista. No inventes nada.";
+    } else sys="Sos un selector de frases. Elegí UNA frase de la lista. No inventes texto.";
 
     try {
         if(config.motorIA==="gemini"){
@@ -67,18 +71,19 @@ async function IA(contexto, modo, usuarioInsulto = false){
             });
             return r.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
         }
-
+        // Fallback Groq si Gemini falla
         const g = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
             model:"llama-3.3-70b-versatile",
             messages:[{role:"system",content:sys},{role:"user",content:contexto}]
         }, {headers:{Authorization:`Bearer ${process.env.GROQ_API_KEY}`}});
         return g.data.choices[0].message.content || null;
     } catch (e) {
-        console.log("Error en IA, activando modo supervivencia.");
-        return null; // Devolvemos null para que el bot use el ADN local
+        console.log("Falla en IA: Usando ADN local.");
+        return null; 
     }
 }
 
+// INICIO
 async function start(){
     await mongo.connect();
     const db = mongo.db("patroclo_bot");
@@ -91,9 +96,11 @@ async function start(){
     console.log(`🔥 PATROCLO B17.5 ONLINE`);
 }
 
+// MENSAJES
 client.on("messageCreate", async msg => {
     if(!msg.author) return;
 
+    // ANTI-LOOP PATROCLO ORIGINAL
     if(msg.author.id === ID_PATROCLO_ORIGINAL){
         loopBotCounter++;
         if(loopBotCounter >= 3) return; 
@@ -103,9 +110,11 @@ client.on("messageCreate", async msg => {
 
     if(msg.author.bot) return;
 
+    // Billetera
     let user = await usersColl.findOne({userId:msg.author.id}) || {userId:msg.author.id, points:1000};
     const content = msg.content.toLowerCase();
 
+    // GUARDAR ADN
     if(!msg.content.startsWith("!") && msg.content.length > 5){
         if(!config.phrases.includes(msg.content)){ 
             config.phrases.push(msg.content); 
@@ -113,10 +122,12 @@ client.on("messageCreate", async msg => {
         }
     }
 
+    // COMANDOS
     if(msg.content.startsWith("!")){
         const args = msg.content.slice(1).split(" ");
         const cmd = args.shift().toLowerCase();
 
+        // Seguridad Tricky
         if(["modo", "olvida", "asocia"].includes(cmd) && msg.author.id !== ID_OWNER) return;
 
         if(cmd==="modo"){
@@ -129,7 +140,7 @@ client.on("messageCreate", async msg => {
             const p = args.join(" ").split(">");
             if(p.length < 2) return msg.reply("Uso: !asocia clave > respuesta");
             await asociaColl.updateOne({clave: p[0].trim().toLowerCase()}, {$set:{respuesta: p[1].trim()}}, {upsert:true});
-            return msg.reply("✅ Anotado.");
+            return msg.reply("✅ Guardado.");
         }
 
         if(cmd==="olvida"){
@@ -139,7 +150,7 @@ client.on("messageCreate", async msg => {
             return msg.reply(`🗑️ ADN Limpiado.`);
         }
 
-        if(cmd==="bal") return msg.reply(`💰 Puntos: ${user.points}`);
+        if(cmd==="bal") return msg.reply(`💰 Saldo: $${user.points}`);
 
         if(cmd==="bj"){
             const m = parseInt(args[0])||100;
@@ -155,6 +166,7 @@ client.on("messageCreate", async msg => {
         return;
     }
 
+    // --- RESPUESTA LÓGICA ---
     const insultos = ["pelotudo","boludo","hdp","forro","pajero"];
     const usuarioInsulto = insultos.some(i => content.includes(i));
     const trigger = msg.mentions.has(client.user.id) || content.includes("patro") || msgCounter >= 4;
@@ -163,27 +175,29 @@ client.on("messageCreate", async msg => {
     msgCounter = 0;
     msg.channel.sendTyping();
 
-    // --- MODO NORMAL / FALLBACK SEGURO ---
+    // MODO NORMAL (Anti-Excusas)
     if(config.modoActual === "normal"){
         const asoc = await asociaColl.findOne({clave: content});
         if(asoc) return msg.reply(asoc.respuesta);
 
         const muestra = config.phrases.sort(()=>0.5-Math.random()).slice(0,40);
-        const resIA = await IA(`ADN: [${muestra.join(" | ")}]\n\nUser: ${msg.content}`, "normal");
+        const resIA = await IA(`ADN: [${muestra.join(" | ")}]\n\nPregunta: "${msg.content}"\nRespondé SOLO con la frase. Si no hay nada, decí: FALLBACK`, "normal");
         
         let limpia = resIA ? resIA.replace(/^(aquí tienes|la frase es:|respuesta:|")/gi, "").replace(/"$/g, "").trim() : "";
         const excusas = ["fallback", "no encontr", "no hay", "asociad", "lo siento", "recalentó"];
         
         if (!limpia || excusas.some(e => limpia.toLowerCase().includes(e))) {
-            return msg.reply(rand(config.phrases));
+            limpia = rand(config.phrases);
         }
         return msg.reply(limpia);
     }
 
+    // MODO IA / SERIO
     const finalRes = await IA(`Msg: ${msg.content}`, config.modoActual, usuarioInsulto);
     return msg.reply(finalRes ? cortar(finalRes) : rand(config.phrases));
 });
 
+// INTERACCIONES BLACKJACK
 client.on("interactionCreate", async int => {
     if(!int.isButton()) return;
     const d = client.retos.get(`bj_${int.user.id}`);
@@ -194,7 +208,7 @@ client.on("interactionCreate", async int => {
         if(p > 21){ 
             await usersColl.updateOne({userId:int.user.id}, {$inc:{points:-d.monto}}, {upsert:true});
             client.retos.delete(`bj_${int.user.id}`);
-            return int.update({content:`💀 Perdiste $${d.monto} (${p})`, components:[]});
+            return int.update({content:`💀 Te pasaste (${p}). Perdiste $${d.monto}`, components:[]});
         }
         return int.update({content:`🃏 BJ: ${d.manoU.map(c=>c.txt).join(" ")} (${p})`});
     }
