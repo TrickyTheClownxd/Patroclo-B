@@ -1,5 +1,5 @@
 // ==========================================
-// PATROCLO HC++++ FINAL
+// PATROCLO HC+++++ FINAL (MAPA + GUERRAS + BONUS)
 // ==========================================
 
 import {
@@ -7,20 +7,20 @@ import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   EmbedBuilder, AttachmentBuilder
 } from 'discord.js';
+
 import { MongoClient } from 'mongodb';
 import http from 'http';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import fs from "fs";
-import { createCanvas } from "canvas";
 
 dotenv.config();
 
-// ================= SERVER =================
+// ===== SERVER =====
 const port = process.env.PORT || 8080;
-http.createServer((req,res)=>res.end("PATROCLO HC++++ ONLINE")).listen(port);
+http.createServer((req,res)=>res.end("PATROCLO HC+++++ ONLINE")).listen(port);
 
-// ================= SAFE JSON =================
+// ===== JSON =====
 function safeJSON(path, def){
   try{
     if(!fs.existsSync(path)){
@@ -33,43 +33,39 @@ function safeJSON(path, def){
   }
 }
 
-let memoria = safeJSON("./memoria.json",{chat:[], users:{}});
+let memoria = safeJSON("./memoria.json",{chat:[],users:{}});
 let extras = safeJSON("./extras.json",{phrases:[],facts:[],reacciones_auto:{palabras_clave:[],emojis:[]}});
 let universe = safeJSON("./universe.json",{facts:[],usedToday:[]});
 
-// ================= CLIENT =================
+// ===== CLIENT =====
 const client = new Client({
   intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
   partials:[Partials.Channel]
 });
 
 const mongo = new MongoClient(process.env.MONGO_URI);
-let usersColl, dataColl, placeColl, asociaColl;
 
-// ================= CONFIG =================
+let usersColl, dataColl, territoriosColl;
+
+// ===== CONFIG =====
 let config = { phrases: [], modoActual: "ia", motorIA: "gemini" };
-
-let msgCounter = 0;
 if(!client.retos) client.retos = new Map();
 
-// ================= UTILS =================
+// ===== UTILS =====
 const rand = a => a[Math.floor(Math.random()*a.length)];
 const cortar = t => t ? t.slice(0,1900) : "";
 
-// ================= IA =================
+// ===== IA =====
 async function IA(contexto, modo, insulto=false){
   let sys;
 
-  if(modo==="serio"){
-    sys="Sos un asistente profesional.";
-  }
+  if(modo==="serio") sys="Sos un asistente profesional.";
   else if(modo==="ia"){
     sys = insulto
-      ? "Sos Patroclo argentino, agresivo y bardero."
-      : "Sos Patroclo argentino, sarcástico.";
-  }
-  else{
-    sys="Elegí UNA frase. No inventes.";
+      ? "Sos Patroclo argentino bardero."
+      : "Sos Patroclo sarcástico.";
+  } else {
+    sys="Elegí UNA frase de la lista. No inventes.";
   }
 
   try{
@@ -77,62 +73,54 @@ async function IA(contexto, modo, insulto=false){
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {contents:[{parts:[{text:sys+"\n\n"+contexto}]}]}
     );
-
     return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
   }catch{
     return null;
   }
 }
 
-// ================= START =================
+// ===== START =====
 async function start(){
   await mongo.connect();
   const db = mongo.db("patroclo_bot");
 
   usersColl = db.collection("users");
   dataColl = db.collection("bot_data");
-  placeColl = db.collection("place");
-  asociaColl = db.collection("asociaciones");
+  territoriosColl = db.collection("territorios");
 
   const d = await dataColl.findOne({id:"main_config"});
   if(d) config = {...config,...d};
 
   await client.login(process.env.TOKEN);
-  console.log("🔥 PATROCLO HC++++ ONLINE");
+  console.log("🔥 PATROCLO HC+++++ ONLINE");
 }
 
-// ================= CARTAS =================
-function generarCarta(){
-  const v=[{n:'A',v:11},{n:'2',v:2},{n:'3',v:3},{n:'4',v:4},{n:'5',v:5},{n:'6',v:6},{n:'7',v:7},{n:'8',v:8},{n:'9',v:9},{n:'10',v:10},{n:'J',v:10},{n:'Q',v:10},{n:'K',v:10}];
-  const i=rand(v);
-  return {txt:`${i.n}${rand(['♠️','♥️','♦️','♣️'])}`,val:i.v};
+// ===== PODER TERRITORIAL =====
+async function getPoder(guildId){
+  return await territoriosColl.countDocuments({owner:guildId});
 }
 
-function puntos(m){
-  let p=m.reduce((a,c)=>a+c.val,0);
-  let ases=m.filter(c=>c.txt.startsWith("A")).length;
-  while(p>21 && ases>0){p-=10;ases--;}
-  return p;
+// ===== COSTO Y PROB =====
+function getStats(poder){
+  if(poder <= 3) return {costo:200, prob:0.7};
+  if(poder <= 7) return {costo:500, prob:0.5};
+  return {costo:1000, prob:0.3};
 }
 
-// ================= MENSAJES =================
+// ===== BONUS =====
+function getBonus(poder){
+  if(poder <= 3) return 200;
+  if(poder <= 7) return 500;
+  return 1000;
+}
+
+// ===== MENSAJES =====
 client.on("messageCreate", async msg=>{
   if(!msg.author || msg.author.bot) return;
 
-  let user = await usersColl.findOne({userId:msg.author.id}) || {userId:msg.author.id, points:1000, rep:0};
+  let user = await usersColl.findOne({userId:msg.author.id}) || {userId:msg.author.id, points:1000};
 
   const content = msg.content.toLowerCase();
-
-  // ===== MEMORIA POR USUARIO (HC+++) =====
-  if(!memoria.users[msg.author.id]){
-    memoria.users[msg.author.id] = { mensajes:[], personalidad:{} };
-  }
-
-  memoria.users[msg.author.id].mensajes.push(msg.content);
-  if(memoria.users[msg.author.id].mensajes.length > 20)
-    memoria.users[msg.author.id].mensajes.shift();
-
-  fs.writeFileSync("./memoria.json", JSON.stringify(memoria,null,2));
 
   // ===== ADN =====
   if(!msg.content.startsWith("!") && msg.content.length > 5){
@@ -142,7 +130,7 @@ client.on("messageCreate", async msg=>{
     }
   }
 
-  // ================= COMANDOS =================
+  // ===== COMANDOS =====
   if(msg.content.startsWith("!")){
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
@@ -155,139 +143,104 @@ client.on("messageCreate", async msg=>{
 
     if(cmd==="bal") return msg.reply(`💰 $${user.points}`);
 
-    if(cmd==="stats"){
-      return msg.reply(`🧠 ${config.phrases.length} frases\n💰 $${user.points}`);
-    }
-
-    if(cmd==="asocia"){
-      const p = args.join(" ").split(">");
-      await asociaColl.updateOne(
-        {clave:p[0].trim()},
-        {$set:{respuesta:p[1].trim()}},
-        {upsert:true}
-      );
-      return msg.reply("Guardado.");
-    }
-
-    if(cmd==="gif"){
-      const r = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`);
-      return msg.reply(r.data.data[0]?.images?.original?.url || "Nada");
-    }
-
-    if(cmd==="foto"){
-      try{
-        const r = await axios.post(
-          "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
-          {inputs: args.join(" ")},
-          {headers:{Authorization:`Bearer ${process.env.HF_API_KEY}`},responseType:"arraybuffer"}
-        );
-        return msg.reply({files:[new AttachmentBuilder(Buffer.from(r.data),{name:"img.png"})]});
-      }catch{
-        return msg.reply("Error generando imagen");
-      }
-    }
-
     if(cmd==="universefacts"){
-      let pool = [...universe.facts.filter(f=>!universe.usedToday.includes(f)), ...extras.facts];
-      const fact = rand(pool);
-
-      universe.usedToday.push(fact);
-      if(universe.usedToday.length > universe.facts.length)
-        universe.usedToday = [];
-
-      fs.writeFileSync("./universe.json", JSON.stringify(universe,null,2));
-
-      return msg.reply(fact);
+      return msg.reply(rand([...universe.facts,...extras.facts]));
     }
 
-    // ===== W PLACE =====
-    if(cmd==="place"){
-      const x=parseInt(args[0]);
-      const y=parseInt(args[1]);
-      const color=args[2]||"#fff";
+    // ===== CLAIM =====
+    if(cmd==="claim"){
+      const pais = args[0]?.toUpperCase();
+      if(!pais) return msg.reply("Ej: !claim AR");
 
-      await placeColl.updateOne(
-        {x,y},
-        {$set:{color,server:msg.guild.id}},
-        {upsert:true}
-      );
+      const existe = await territoriosColl.findOne({country:pais});
+      if(existe) return msg.reply("Ya tiene dueño.");
 
-      return msg.reply(`Pixel (${x},${y})`);
-    }
+      const color = "#"+Math.floor(Math.random()*16777215).toString(16);
 
-    if(cmd==="mapa"){
-      const size=64, scale=10;
-      const canvas=createCanvas(size*scale,size*scale);
-      const ctx=canvas.getContext("2d");
-
-      ctx.fillStyle="#111";
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-
-      const pixels=await placeColl.find().toArray();
-      pixels.forEach(p=>{
-        ctx.fillStyle=p.color;
-        ctx.fillRect(p.x*scale,p.y*scale,scale,scale);
+      await territoriosColl.insertOne({
+        country:pais,
+        owner:msg.guild.id,
+        color
       });
 
-      return msg.reply({
-        files:[new AttachmentBuilder(canvas.toBuffer(),{name:"mapa.png"})]
-      });
+      return msg.reply(`🌍 Conquistaste ${pais}`);
     }
 
-    // ===== RULETA =====
-    if(cmd==="ruleta"){
-      const m=parseInt(args[0])||100;
-      const numero=Math.floor(Math.random()*37);
-      const color=numero===0?"verde":numero%2?"rojo":"negro";
+    // ===== ATAQUE =====
+    if(cmd==="atacar"){
+      const pais = args[0]?.toUpperCase();
+      if(!pais) return msg.reply("Ej: !atacar AR");
 
-      const win = args[1]==numero || args[1]==color;
+      const target = await territoriosColl.findOne({country:pais});
+      if(!target) return msg.reply("Ese país no tiene dueño.");
+
+      const poder = await getPoder(target.owner);
+      const {costo, prob} = getStats(poder);
+
+      if(user.points < costo) return msg.reply("No tenés plata para atacar.");
+
+      const win = Math.random() < prob;
 
       await usersColl.updateOne(
         {userId:msg.author.id},
-        {$inc:{points: win?m*2:-m}},
+        {$inc:{points:-costo}},
         {upsert:true}
       );
 
-      return msg.reply(`${numero} (${color}) ${win?"GANASTE":"PERDISTE"}`);
+      if(win){
+        await territoriosColl.updateOne(
+          {country:pais},
+          {$set:{owner:msg.guild.id}}
+        );
+        return msg.reply(`⚔️ GANASTE ${pais}`);
+      }else{
+        return msg.reply(`💀 Perdiste el ataque`);
+      }
+    }
+
+    // ===== RANK =====
+    if(cmd==="topterritorios"){
+      const data = await territoriosColl.aggregate([
+        {$group:{_id:"$owner", total:{$sum:1}}},
+        {$sort:{total:-1}}
+      ]).toArray();
+
+      return msg.reply(
+        data.map((d,i)=>`${i+1}. ${d._id} - ${d.total}`).join("\n") || "Nada"
+      );
+    }
+
+    // ===== BONUS MANUAL =====
+    if(cmd==="bonus"){
+      const poder = await getPoder(msg.guild.id);
+      const bonus = getBonus(poder);
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:bonus}},
+        {upsert:true}
+      );
+
+      return msg.reply(`💰 Bonus: +${bonus}`);
     }
 
     return;
   }
 
-  // ================= TRIGGER =================
-  const insultos = ["pelotudo","boludo","hdp","forro"];
-  const insulto = insultos.some(i=>content.includes(i));
+  // ===== IA =====
+  const trigger = msg.mentions.has(client.user.id) || content.includes("patro");
 
-  const trigger =
-    msg.mentions.has(client.user.id) ||
-    content.includes("patro") ||
-    msg.reference ||
-    msgCounter >= 3;
+  if(!trigger) return;
 
-  if(!trigger){
-    msgCounter++;
-    return;
-  }
-
-  msgCounter = 0;
   msg.channel.sendTyping();
 
-  // ===== MODO NORMAL =====
   if(config.modoActual==="normal"){
-    const muestra = config.phrases.sort(()=>0.5-Math.random()).slice(0,50);
-
-    const r = await IA(
-      `Frases: [${muestra.join(" | ")}]\nMensaje: ${msg.content}`,
-      "normal"
-    );
-
-    return msg.reply(r || rand(config.phrases));
+    return msg.reply(rand(config.phrases));
   }
 
-  // ===== IA =====
-  const r = await IA(msg.content, config.modoActual, insulto);
+  const r = await IA(msg.content, config.modoActual);
 
-  return msg.reply(cortar(r) || rand(config.phrases));
+  return msg.reply(r || rand(config.phrases));
 });
 
 start();
