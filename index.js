@@ -1,5 +1,5 @@
 // ==========================================
-// PATROCLO ULTRA FINAL GOD - index.js (UNIFICADO)
+// PATROCLO ULTRA FINAL GOD - index.js (FULL INTEGRATED)
 // ==========================================
 import { 
     Client, GatewayIntentBits, Partials, 
@@ -40,7 +40,6 @@ const mongo = new MongoClient(process.env.MONGO_URI);
 let usersColl, dataColl, asociaColl;
 
 let config = { phrases: [], modoActual: "ia", motorIA: "gemini" };
-let msgCounter = 0;
 let loopBotCounter = 0; 
 if(!client.retos) client.retos = new Map();
 
@@ -56,7 +55,7 @@ async function IA(contexto, modo, usuarioInsulto = false){
         sys = usuarioInsulto 
             ? "Sos Patroclo, argentino sacado. Respondé con bardo, sarcasmo y jerga de barrio porteño." 
             : "Sos Patroclo, pibe argentino, sarcástico y gracioso.";
-    } else sys="Sos un selector de frases. Elegí UNA frase de la lista. No inventes texto.";
+    } else sys="Sos un selector de frases. Tu misión es elegir UNA frase de la lista. PROHIBIDO inventar texto.";
 
     try {
         if(config.motorIA==="gemini"){
@@ -71,7 +70,6 @@ async function IA(contexto, modo, usuarioInsulto = false){
             });
             return r.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
         }
-        // Fallback Groq si Gemini falla
         const g = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
             model:"llama-3.3-70b-versatile",
             messages:[{role:"system",content:sys},{role:"user",content:contexto}]
@@ -93,7 +91,7 @@ async function start(){
     const d = await dataColl.findOne({id:"main_config"});
     if(d) config = {...config,...d};
     await client.login(process.env.TOKEN);
-    console.log(`🔥 PATROCLO B17.5 ONLINE`);
+    console.log(`🔥 PATROCLO B17.5 ONLINE - TRIGGER 100%`);
 }
 
 // MENSAJES
@@ -110,7 +108,6 @@ client.on("messageCreate", async msg => {
 
     if(msg.author.bot) return;
 
-    // Billetera
     let user = await usersColl.findOne({userId:msg.author.id}) || {userId:msg.author.id, points:1000};
     const content = msg.content.toLowerCase();
 
@@ -122,12 +119,11 @@ client.on("messageCreate", async msg => {
         }
     }
 
-    // COMANDOS
+    // --- COMANDOS ---
     if(msg.content.startsWith("!")){
         const args = msg.content.slice(1).split(" ");
         const cmd = args.shift().toLowerCase();
 
-        // Seguridad Tricky
         if(["modo", "olvida", "asocia"].includes(cmd) && msg.author.id !== ID_OWNER) return;
 
         if(cmd==="modo"){
@@ -152,6 +148,24 @@ client.on("messageCreate", async msg => {
 
         if(cmd==="bal") return msg.reply(`💰 Saldo: $${user.points}`);
 
+        if(cmd==="gif"){
+            try {
+                const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`);
+                return msg.reply(res.data.data[0]?.url || "No encontré ni un gif de eso.");
+            } catch { return msg.reply("Se cayó Giphy, manejalo."); }
+        }
+
+        if(cmd==="foto"){
+            try {
+                msg.channel.sendTyping();
+                const res = await axios.post("https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5", 
+                    { inputs: args.join(" ") }, 
+                    { headers: { Authorization: `Bearer ${process.env.HF_API_KEY}` }, responseType: 'arraybuffer' }
+                );
+                return msg.reply({ files: [new AttachmentBuilder(Buffer.from(res.data), { name: 'foto.png' })] });
+            } catch { return msg.reply("Se me terminó el tóner, intentá después."); }
+        }
+
         if(cmd==="bj"){
             const m = parseInt(args[0])||100;
             if(user.points < m) return msg.reply("No tenés un peso.");
@@ -166,14 +180,14 @@ client.on("messageCreate", async msg => {
         return;
     }
 
-    // --- RESPUESTA LÓGICA ---
+    // --- TRIGGER 100% (Mención, Reply o Nombre) ---
+    const esInvocado = msg.mentions.has(client.user.id) || content.includes("patroclo") || content.includes("patro");
+    
+    if(!esInvocado) return; // Si no lo llaman, Patroclo no se mete.
+
+    msg.channel.sendTyping();
     const insultos = ["pelotudo","boludo","hdp","forro","pajero"];
     const usuarioInsulto = insultos.some(i => content.includes(i));
-    const trigger = msg.mentions.has(client.user.id) || content.includes("patro") || msgCounter >= 4;
-
-    if(!trigger){ msgCounter++; return; }
-    msgCounter = 0;
-    msg.channel.sendTyping();
 
     // MODO NORMAL (Anti-Excusas)
     if(config.modoActual === "normal"){
@@ -181,10 +195,10 @@ client.on("messageCreate", async msg => {
         if(asoc) return msg.reply(asoc.respuesta);
 
         const muestra = config.phrases.sort(()=>0.5-Math.random()).slice(0,40);
-        const resIA = await IA(`ADN: [${muestra.join(" | ")}]\n\nPregunta: "${msg.content}"\nRespondé SOLO con la frase. Si no hay nada, decí: FALLBACK`, "normal");
+        const resIA = await IA(`ADN: [${muestra.join(" | ")}]\n\nPregunta: "${msg.content}"\nRespondé SOLO con la frase elegida.`, "normal");
         
         let limpia = resIA ? resIA.replace(/^(aquí tienes|la frase es:|respuesta:|")/gi, "").replace(/"$/g, "").trim() : "";
-        const excusas = ["fallback", "no encontr", "no hay", "asociad", "lo siento", "recalentó"];
+        const excusas = ["fallback", "no encontr", "no hay", "asociad", "lo siento", "recalentó", "asistente"];
         
         if (!limpia || excusas.some(e => limpia.toLowerCase().includes(e))) {
             limpia = rand(config.phrases);
@@ -201,7 +215,7 @@ client.on("messageCreate", async msg => {
 client.on("interactionCreate", async int => {
     if(!int.isButton()) return;
     const d = client.retos.get(`bj_${int.user.id}`);
-    if(!d) return int.reply({content:"Expiró.", ephemeral:true});
+    if(!d) return;
 
     if(int.customId === "bj_pedir"){
         d.manoU.push(generarCarta()); const p = calcularPuntos(d.manoU);
