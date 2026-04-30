@@ -1,26 +1,22 @@
-// ==========================================
-// PATROCLO HC+++++ FINAL (MAPA + GUERRAS + BONUS)
-// ==========================================
-
 import {
   Client, GatewayIntentBits, Partials,
   ActionRowBuilder, ButtonBuilder, ButtonStyle,
   EmbedBuilder, AttachmentBuilder
-} from 'discord.js';
+} from "discord.js";
 
-import { MongoClient } from 'mongodb';
-import http from 'http';
-import dotenv from 'dotenv';
-import axios from 'axios';
+import { MongoClient } from "mongodb";
+import http from "http";
+import dotenv from "dotenv";
+import axios from "axios";
 import fs from "fs";
+import { createCanvas, loadImage } from "canvas";
 
 dotenv.config();
 
 // ===== SERVER =====
-const port = process.env.PORT || 8080;
-http.createServer((req,res)=>res.end("PATROCLO HC+++++ ONLINE")).listen(port);
+http.createServer((req,res)=>res.end("PATROCLO GOD")).listen(process.env.PORT||8080);
 
-// ===== JSON =====
+// ===== FILES =====
 function safeJSON(path, def){
   try{
     if(!fs.existsSync(path)){
@@ -28,14 +24,15 @@ function safeJSON(path, def){
       return def;
     }
     return JSON.parse(fs.readFileSync(path,"utf-8"));
-  }catch{
-    return def;
-  }
+  }catch{return def;}
 }
 
-let memoria = safeJSON("./memoria.json",{chat:[],users:{}});
-let extras = safeJSON("./extras.json",{phrases:[],facts:[],reacciones_auto:{palabras_clave:[],emojis:[]}});
+let memoria = safeJSON("./memoria.json",{chat:[],users:{},phrases:[]});
+const extras = safeJSON("./extras.json",{});
 let universe = safeJSON("./universe.json",{facts:[],usedToday:[]});
+
+const saveMem = ()=>fs.writeFileSync("./memoria.json",JSON.stringify(memoria,null,2));
+const saveUniverse = ()=>fs.writeFileSync("./universe.json",JSON.stringify(universe,null,2));
 
 // ===== CLIENT =====
 const client = new Client({
@@ -45,27 +42,24 @@ const client = new Client({
 
 const mongo = new MongoClient(process.env.MONGO_URI);
 
-let usersColl, dataColl, territoriosColl;
+let usersColl, dataColl, placeColl;
 
-// ===== CONFIG =====
-let config = { phrases: [], modoActual: "ia", motorIA: "gemini" };
-if(!client.retos) client.retos = new Map();
+let config = { phrases:[], modoActual:"ia", motorIA:"gemini" };
 
-// ===== UTILS =====
-const rand = a => a[Math.floor(Math.random()*a.length)];
-const cortar = t => t ? t.slice(0,1900) : "";
+let msgCounter = 0;
+const rand = a=>a[Math.floor(Math.random()*a.length)];
+const cortar = t=>t?.slice(0,1900);
 
 // ===== IA =====
-async function IA(contexto, modo, insulto=false){
+async function IA(contexto, modo){
   let sys;
 
-  if(modo==="serio") sys="Sos un asistente profesional.";
-  else if(modo==="ia"){
-    sys = insulto
-      ? "Sos Patroclo argentino bardero."
-      : "Sos Patroclo sarcástico.";
+  if(modo==="normal"){
+    sys = "Elegí UNA frase del ADN que mejor encaje con el contexto. NO inventes nada.";
+  } else if(modo==="serio"){
+    sys="Sos un asistente profesional.";
   } else {
-    sys="Elegí UNA frase de la lista. No inventes.";
+    sys="Sos argentino sarcástico.";
   }
 
   try{
@@ -73,10 +67,32 @@ async function IA(contexto, modo, insulto=false){
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {contents:[{parts:[{text:sys+"\n\n"+contexto}]}]}
     );
+
     return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  }catch{
-    return null;
-  }
+  }catch{return null;}
+}
+
+// ===== PLACE =====
+const SIZE=128, SCALE=4;
+const cooldown = new Map();
+
+async function renderPlace(){
+  const canvas = createCanvas(SIZE*SCALE,SIZE*SCALE);
+  const ctx = canvas.getContext("2d");
+
+  try{
+    const bg = await loadImage("./maps/world.png");
+    ctx.drawImage(bg,0,0,canvas.width,canvas.height);
+  }catch{}
+
+  const pixels = await placeColl.find().toArray();
+
+  pixels.forEach(p=>{
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x*SCALE,p.y*SCALE,SCALE,SCALE);
+  });
+
+  return canvas.toBuffer();
 }
 
 // ===== START =====
@@ -84,163 +100,116 @@ async function start(){
   await mongo.connect();
   const db = mongo.db("patroclo_bot");
 
-  usersColl = db.collection("users");
-  dataColl = db.collection("bot_data");
-  territoriosColl = db.collection("territorios");
+  usersColl=db.collection("users");
+  dataColl=db.collection("bot_data");
+  placeColl=db.collection("place_pixels");
 
   const d = await dataColl.findOne({id:"main_config"});
-  if(d) config = {...config,...d};
+  if(d) config={...config,...d};
 
   await client.login(process.env.TOKEN);
-  console.log("🔥 PATROCLO HC+++++ ONLINE");
-}
-
-// ===== PODER TERRITORIAL =====
-async function getPoder(guildId){
-  return await territoriosColl.countDocuments({owner:guildId});
-}
-
-// ===== COSTO Y PROB =====
-function getStats(poder){
-  if(poder <= 3) return {costo:200, prob:0.7};
-  if(poder <= 7) return {costo:500, prob:0.5};
-  return {costo:1000, prob:0.3};
-}
-
-// ===== BONUS =====
-function getBonus(poder){
-  if(poder <= 3) return 200;
-  if(poder <= 7) return 500;
-  return 1000;
+  console.log("🔥 ONLINE");
 }
 
 // ===== MENSAJES =====
 client.on("messageCreate", async msg=>{
   if(!msg.author || msg.author.bot) return;
 
-  let user = await usersColl.findOne({userId:msg.author.id}) || {userId:msg.author.id, points:1000};
-
   const content = msg.content.toLowerCase();
 
   // ===== ADN =====
-  if(!msg.content.startsWith("!") && msg.content.length > 5){
+  if(!msg.content.startsWith("!") && msg.content.length>5){
     if(!config.phrases.includes(msg.content)){
       config.phrases.push(msg.content);
-      await dataColl.updateOne({id:"main_config"}, {$set:config},{upsert:true});
+      memoria.phrases.push(msg.content);
+      await dataColl.updateOne({id:"main_config"},{$set:config},{upsert:true});
+      saveMem();
     }
   }
+
+  // ===== CHAT MEM =====
+  memoria.chat.push(`${msg.author.username}: ${msg.content}`);
+  if(memoria.chat.length>20) memoria.chat.shift();
+  saveMem();
 
   // ===== COMANDOS =====
   if(msg.content.startsWith("!")){
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
 
-    if(cmd==="modo"){
-      config.modoActual = args[0];
-      await dataColl.updateOne({id:"main_config"}, {$set:config},{upsert:true});
-      return msg.reply("Modo: "+args[0]);
-    }
-
-    if(cmd==="bal") return msg.reply(`💰 $${user.points}`);
-
     if(cmd==="universefacts"){
-      return msg.reply(rand([...universe.facts,...extras.facts]));
-    }
+      let disponibles = universe.facts.filter(f=>!universe.usedToday.includes(f));
 
-    // ===== CLAIM =====
-    if(cmd==="claim"){
-      const pais = args[0]?.toUpperCase();
-      if(!pais) return msg.reply("Ej: !claim AR");
-
-      const existe = await territoriosColl.findOne({country:pais});
-      if(existe) return msg.reply("Ya tiene dueño.");
-
-      const color = "#"+Math.floor(Math.random()*16777215).toString(16);
-
-      await territoriosColl.insertOne({
-        country:pais,
-        owner:msg.guild.id,
-        color
-      });
-
-      return msg.reply(`🌍 Conquistaste ${pais}`);
-    }
-
-    // ===== ATAQUE =====
-    if(cmd==="atacar"){
-      const pais = args[0]?.toUpperCase();
-      if(!pais) return msg.reply("Ej: !atacar AR");
-
-      const target = await territoriosColl.findOne({country:pais});
-      if(!target) return msg.reply("Ese país no tiene dueño.");
-
-      const poder = await getPoder(target.owner);
-      const {costo, prob} = getStats(poder);
-
-      if(user.points < costo) return msg.reply("No tenés plata para atacar.");
-
-      const win = Math.random() < prob;
-
-      await usersColl.updateOne(
-        {userId:msg.author.id},
-        {$inc:{points:-costo}},
-        {upsert:true}
-      );
-
-      if(win){
-        await territoriosColl.updateOne(
-          {country:pais},
-          {$set:{owner:msg.guild.id}}
-        );
-        return msg.reply(`⚔️ GANASTE ${pais}`);
-      }else{
-        return msg.reply(`💀 Perdiste el ataque`);
+      if(disponibles.length===0){
+        universe.usedToday=[];
+        disponibles=universe.facts;
       }
+
+      const fact = rand(disponibles);
+      universe.usedToday.push(fact);
+
+      if(universe.usedToday.length>=universe.facts.length){
+        universe.facts.push(...extras.facts);
+      }
+
+      saveUniverse();
+      return msg.reply(fact);
     }
 
-    // ===== RANK =====
-    if(cmd==="topterritorios"){
-      const data = await territoriosColl.aggregate([
-        {$group:{_id:"$owner", total:{$sum:1}}},
-        {$sort:{total:-1}}
-      ]).toArray();
+    if(cmd==="pixel"){
+      const x=parseInt(args[0]), y=parseInt(args[1]);
+      const color=args[2]||"#ffffff";
 
-      return msg.reply(
-        data.map((d,i)=>`${i+1}. ${d._id} - ${d.total}`).join("\n") || "Nada"
-      );
+      const last=cooldown.get(msg.author.id)||0;
+      if(Date.now()-last<3000) return msg.reply("Cooldown");
+
+      cooldown.set(msg.author.id,Date.now());
+
+      await placeColl.updateOne({x,y},{$set:{color,guildId:msg.guild.id}},{upsert:true});
+      return msg.reply("Pixel colocado");
     }
 
-    // ===== BONUS MANUAL =====
-    if(cmd==="bonus"){
-      const poder = await getPoder(msg.guild.id);
-      const bonus = getBonus(poder);
-
-      await usersColl.updateOne(
-        {userId:msg.author.id},
-        {$inc:{points:bonus}},
-        {upsert:true}
-      );
-
-      return msg.reply(`💰 Bonus: +${bonus}`);
+    if(cmd==="place"){
+      const img = await renderPlace();
+      return msg.reply({files:[new AttachmentBuilder(img,"map.png")]});
     }
 
     return;
   }
 
-  // ===== IA =====
-  const trigger = msg.mentions.has(client.user.id) || content.includes("patro");
+  // ===== TRIGGERS =====
+  msgCounter++;
 
-  if(!trigger) return;
+  const invocado =
+    msg.mentions.has(client.user.id) ||
+    content.includes("patro");
 
-  msg.channel.sendTyping();
+  const randomTrigger = Math.random() < 0.25;
+  const forcedTrigger = msgCounter >= 3;
 
+  if(!invocado && !randomTrigger && !forcedTrigger) return;
+
+  msgCounter = 0;
+
+  // ===== RESPUESTA =====
   if(config.modoActual==="normal"){
-    return msg.reply(rand(config.phrases));
+
+    const pool = [...config.phrases, ...extras.phrases].slice(-40);
+
+    const r = await IA(
+      `Contexto:\n${memoria.chat.join("\n")}\n\nFrases:\n${pool.join("\n")}`,
+      "normal"
+    );
+
+    if(r && pool.includes(r.trim())){
+      return msg.reply(r.trim());
+    }
+
+    return msg.reply(rand(pool));
   }
 
-  const r = await IA(msg.content, config.modoActual);
-
-  return msg.reply(r || rand(config.phrases));
+  const r = await IA(msg.content,config.modoActual);
+  return msg.reply(r||rand(config.phrases));
 });
 
 start();
