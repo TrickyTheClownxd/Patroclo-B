@@ -14,7 +14,7 @@ import { createCanvas, loadImage } from "canvas";
 dotenv.config();
 
 // ===== SERVER =====
-http.createServer((req,res)=>res.end("PATROCLO GOD")).listen(process.env.PORT||8080);
+http.createServer((req,res)=>res.end("PATROCLO HC++++++++")).listen(process.env.PORT||8080);
 
 // ===== FILES =====
 function safeJSON(path, def){
@@ -55,7 +55,7 @@ async function IA(contexto, modo){
   let sys;
 
   if(modo==="normal"){
-    sys = "Elegí UNA frase del ADN que mejor encaje con el contexto. NO inventes nada.";
+    sys="Elegí UNA frase de la lista que mejor encaje con el contexto. NO inventes.";
   } else if(modo==="serio"){
     sys="Sos un asistente profesional.";
   } else {
@@ -67,7 +67,6 @@ async function IA(contexto, modo){
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {contents:[{parts:[{text:sys+"\n\n"+contexto}]}]}
     );
-
     return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
   }catch{return null;}
 }
@@ -75,6 +74,10 @@ async function IA(contexto, modo){
 // ===== PLACE =====
 const SIZE=128, SCALE=4;
 const cooldown = new Map();
+
+async function getServerPower(guildId){
+  return await placeColl.countDocuments({guildId});
+}
 
 async function renderPlace(){
   const canvas = createCanvas(SIZE*SCALE,SIZE*SCALE);
@@ -90,6 +93,23 @@ async function renderPlace(){
   pixels.forEach(p=>{
     ctx.fillStyle=p.color;
     ctx.fillRect(p.x*SCALE,p.y*SCALE,SCALE,SCALE);
+  });
+
+  return canvas.toBuffer();
+}
+
+async function renderZoom(minX,maxX,minY,maxY){
+  const canvas = createCanvas((maxX-minX)*SCALE,(maxY-minY)*SCALE);
+  const ctx = canvas.getContext("2d");
+
+  const pixels = await placeColl.find({
+    x:{$gte:minX,$lte:maxX},
+    y:{$gte:minY,$lte:maxY}
+  }).toArray();
+
+  pixels.forEach(p=>{
+    ctx.fillStyle=p.color;
+    ctx.fillRect((p.x-minX)*SCALE,(p.y-minY)*SCALE,SCALE,SCALE);
   });
 
   return canvas.toBuffer();
@@ -132,6 +152,13 @@ client.on("messageCreate", async msg=>{
   if(memoria.chat.length>20) memoria.chat.shift();
   saveMem();
 
+  // ===== REACCIONES =====
+  extras.reacciones_auto?.palabras_clave?.forEach(p=>{
+    if(content.includes(p)){
+      msg.react(rand(extras.reacciones_auto.emojis)).catch(()=>{});
+    }
+  });
+
   // ===== COMANDOS =====
   if(msg.content.startsWith("!")){
     const args = msg.content.slice(1).split(" ");
@@ -139,7 +166,6 @@ client.on("messageCreate", async msg=>{
 
     if(cmd==="universefacts"){
       let disponibles = universe.facts.filter(f=>!universe.usedToday.includes(f));
-
       if(disponibles.length===0){
         universe.usedToday=[];
         disponibles=universe.facts;
@@ -157,21 +183,51 @@ client.on("messageCreate", async msg=>{
     }
 
     if(cmd==="pixel"){
-      const x=parseInt(args[0]), y=parseInt(args[1]);
+      const x=parseInt(args[0]);
+      const y=parseInt(args[1]);
       const color=args[2]||"#ffffff";
 
-      const last=cooldown.get(msg.author.id)||0;
-      if(Date.now()-last<3000) return msg.reply("Cooldown");
+      const existing = await placeColl.findOne({x,y});
+      let cost=0;
 
-      cooldown.set(msg.author.id,Date.now());
+      if(existing && existing.guildId !== msg.guild.id){
+        const powerEnemy = await getServerPower(existing.guildId);
+        const powerMe = await getServerPower(msg.guild.id);
+        cost = powerEnemy > powerMe ? 1000 : 200;
 
-      await placeColl.updateOne({x,y},{$set:{color,guildId:msg.guild.id}},{upsert:true});
-      return msg.reply("Pixel colocado");
+        let user = await usersColl.findOne({userId:msg.author.id});
+        if(!user || user.points < cost) return msg.reply("💀 Sin plata");
+
+        await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-cost}},{upsert:true});
+      }
+
+      await placeColl.updateOne(
+        {x,y},
+        {$set:{color,guildId:msg.guild.id,ownerId:msg.author.id}},
+        {upsert:true}
+      );
+
+      return msg.reply(cost?`⚔️ Conquista $${cost}`:"🎨 Pintado");
     }
 
     if(cmd==="place"){
       const img = await renderPlace();
       return msg.reply({files:[new AttachmentBuilder(img,"map.png")]});
+    }
+
+    if(cmd==="zoom"){
+      const img = await renderZoom(0,50,0,50);
+      return msg.reply({files:[new AttachmentBuilder(img,"zoom.png")]});
+    }
+
+    if(cmd==="topplace"){
+      const top = await placeColl.aggregate([
+        {$group:{_id:"$guildId",total:{$sum:1}}},
+        {$sort:{total:-1}},
+        {$limit:5}
+      ]).toArray();
+
+      return msg.reply("🏆\n"+top.map((t,i)=>`${i+1}. ${t._id} → ${t.total}`).join("\n"));
     }
 
     return;
@@ -191,7 +247,7 @@ client.on("messageCreate", async msg=>{
 
   msgCounter = 0;
 
-  // ===== RESPUESTA =====
+  // ===== MODO NORMAL (ADN INTELIGENTE) =====
   if(config.modoActual==="normal"){
 
     const pool = [...config.phrases, ...extras.phrases].slice(-40);
@@ -208,8 +264,9 @@ client.on("messageCreate", async msg=>{
     return msg.reply(rand(pool));
   }
 
+  // ===== IA NORMAL =====
   const r = await IA(msg.content,config.modoActual);
-  return msg.reply(r||rand(config.phrases));
+  return msg.reply(r || rand(config.phrases));
 });
 
 start();
