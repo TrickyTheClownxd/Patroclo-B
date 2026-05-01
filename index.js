@@ -323,8 +323,46 @@ client.on("messageCreate", async msg=>{
     }
 
     if(cmd==="ayudacmd"){
-      return msg.reply("comandos cargados");
-    }
+  return msg.reply(`
+📜 **PATROCLO COMANDOS**
+
+🎨 MAPA
+!place → ver mapa
+!pixel x y color → dibujar
+!zoom x1 x2 y1 y2 → zoom
+
+📷 MULTIMEDIA
+!gif palabra → buscar gif
+!foto palabra → generar imagen
+
+🌌 EXTRA
+!universefacts → dato del universo
+
+💰 ECONOMÍA
+!bal → dinero
+!daily → recompensa diaria
+!work → ganar plata
+!pay @user cantidad → transferir
+
+🎰 CASINO
+!slot → tragamonedas
+!ruleta cantidad → apostar
+!coinflip cantidad → cara/cruz
+
+🏪 TIENDA
+!comprar escudo → protección
+!comprar doble → x2 ganancias
+
+🧠 IA
+!modo normal | ia | serio
+
+🏆 RANKING
+!topplace → servidores
+!rich → usuarios
+
+🔥 El bot aprende solo del chat
+  `);
+}
 
     return;
   }
