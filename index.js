@@ -13,7 +13,7 @@ import { createCanvas, loadImage } from "canvas";
 dotenv.config();
 
 // ================= SERVER =================
-http.createServer((req,res)=>res.end("PATROCLO HC ADN+++")).listen(process.env.PORT||8080);
+http.createServer((req,res)=>res.end("PATROCLO HC FINAL")).listen(process.env.PORT||8080);
 
 // ================= JSON =================
 function safeJSON(path, def){
@@ -57,7 +57,7 @@ async function IA(contexto, modo){
   if(modo==="normal"){
     sys="Elegí UNA frase del ADN que encaje mejor. NO inventes.";
   } else if(modo==="serio"){
-    sys="Respondé de forma profesional.";
+    sys="Respondé profesional.";
   } else {
     sys="Sos argentino sarcástico.";
   }
@@ -69,30 +69,6 @@ async function IA(contexto, modo){
     );
     return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
   }catch{return null;}
-}
-
-// ================= EMOCIONES =================
-function updateEmotion(userId, content){
-  const u = memoria.users[userId] || {messages:[], rep:0, mood:0};
-
-  const pos = ["gracias","bien","genial","joya","crack"];
-  const neg = ["boludo","hdp","forro","pajero","idiota","puto"];
-
-  let delta=0;
-  if(pos.some(w=>content.includes(w))) delta+=1;
-  if(neg.some(w=>content.includes(w))) delta-=2;
-
-  u.rep += delta;
-  u.mood = Math.max(-5, Math.min(5, u.mood+delta));
-
-  memoria.users[userId]=u;
-}
-
-function styleByEmotion(userId){
-  const u = memoria.users[userId]||{};
-  if(u.mood<=-3) return "irónico";
-  if(u.mood>=3) return "amigable";
-  return "neutral";
 }
 
 // ================= PLACE =================
@@ -161,7 +137,7 @@ async function start(){
   saveMem();
 
   await client.login(process.env.TOKEN);
-  console.log("🔥 ONLINE FULL ADN+++");
+  console.log("🔥 PATROCLO FULL ONLINE");
 }
 
 // ================= MENSAJES =================
@@ -170,109 +146,152 @@ client.on("messageCreate", async msg=>{
 
   const content = msg.content.toLowerCase();
 
-  // ===== MEMORIA =====
-  if(!memoria.users[msg.author.id]){
-    memoria.users[msg.author.id]={messages:[],rep:0,mood:0};
-  }
-
-  memoria.users[msg.author.id].messages.push(msg.content);
-  if(memoria.users[msg.author.id].messages.length>10){
-    memoria.users[msg.author.id].messages.shift();
-  }
-
-  updateEmotion(msg.author.id, content);
-
-  await userMemColl.updateOne(
-    {userId:msg.author.id},
-    {$inc:{msg:1}},
-    {upsert:true}
-  );
-
   // ===== APRENDIZAJE =====
   const texto = msg.content.trim().toLowerCase();
-  const esSpam = /(.)\1{6,}/.test(texto);
-
-  if(!msg.content.startsWith("!") && texto.length>1 && !esSpam){
+  if(!msg.content.startsWith("!") && texto.length>1){
     if(!config.phrases.includes(msg.content)){
       config.phrases.push(msg.content);
       memoria.phrases.push(msg.content);
-
       await dataColl.updateOne(
         {id:"main_config"},
         {$set:{phrases:config.phrases}},
         {upsert:true}
       );
-
       saveMem();
     }
   }
-
-  // ===== CHAT =====
-  memoria.chat.push(msg.content);
-  if(memoria.chat.length>20) memoria.chat.shift();
-
-  // ===== REACCIONES =====
-  extras.reacciones_auto?.palabras_clave?.forEach(p=>{
-    if(content.includes(p)){
-      msg.react(rand(extras.reacciones_auto.emojis||["🔥"])).catch(()=>{});
-    }
-  });
 
   // ================= COMANDOS =================
   if(msg.content.startsWith("!")){
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
 
-    if(cmd==="modo"){
-      config.modoActual=args[0]||"ia";
-      return msg.reply("Modo: "+config.modoActual);
+    if(cmd==="bal"){
+      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+      return msg.reply(`💰 ${u.points}`);
     }
 
-    if(cmd==="asocia"){
-      const t=args.join(" ").split(">");
-      await asociaColl.updateOne(
-        {clave:t[0].trim().toLowerCase()},
-        {$set:{respuesta:t[1].trim()}},
+    if(cmd==="daily"){
+      let u=await usersColl.findOne({userId:msg.author.id})||{};
+      if(Date.now()-(u.lastDaily||0)<86400000) return msg.reply("⏳ ya usado");
+
+      const reward=200+Math.floor(Math.random()*400);
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$set:{lastDaily:Date.now()},$inc:{points:reward}},
         {upsert:true}
       );
-      return msg.reply("ok");
+
+      return msg.reply(`🎁 +$${reward}`);
     }
 
-    if(cmd==="gif"){
-      try{
-        const r=await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`);
-        return msg.reply(r.data.data[0]?.url||"no");
-      }catch{return msg.reply("error");}
+    if(cmd==="work"){
+      let u=await usersColl.findOne({userId:msg.author.id})||{};
+      let reward=100+Math.floor(Math.random()*300);
+
+      if(u.boostUntil> Date.now()) reward*=2;
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:reward}},
+        {upsert:true}
+      );
+
+      return msg.reply(`💼 +$${reward}`);
     }
 
-    if(cmd==="foto"){
-      try{
-        const r=await axios.post(
-          "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
-          {inputs:args.join(" ")},
-          {headers:{Authorization:`Bearer ${process.env.HF_API_KEY}`},responseType:"arraybuffer"}
+    if(cmd==="pay"){
+      const user=msg.mentions.users.first();
+      const amount=parseInt(args[1]);
+
+      if(!user||!amount||amount<=0) return msg.reply("uso: !pay @user cantidad");
+
+      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+      if(u.points<amount) return msg.reply("no money");
+
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-amount}});
+      await usersColl.updateOne({userId:user.id},{$inc:{points:amount}},{upsert:true});
+
+      return msg.reply("💸 enviado");
+    }
+
+    if(cmd==="slot"){
+      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+      if(u.points<50) return msg.reply("no money");
+
+      const r=[rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"])];
+      const win=r[0]===r[1]&&r[1]===r[2]?400:0;
+
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:win-50}});
+
+      return msg.reply(`${r.join("|")} → ${win?"💰":"💀"}`);
+    }
+
+    if(cmd==="ruleta"){
+      const bet=parseInt(args[0]);
+      if(!bet) return msg.reply("apuesta inválida");
+
+      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+      if(u.points<bet) return msg.reply("no money");
+
+      const win=Math.random()<0.45;
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points: win?bet:-bet}}
+      );
+
+      return msg.reply(win?"🎉":"💀");
+    }
+
+    if(cmd==="coinflip"){
+      const bet=parseInt(args[0]);
+      if(!bet) return msg.reply("apuesta inválida");
+
+      const win=Math.random()<0.5;
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points: win?bet:-bet}}
+      );
+
+      return msg.reply(win?"🪙":"💀");
+    }
+
+    if(cmd==="comprar"){
+      const item=args[0];
+
+      const precios={escudo:1000,doble:1500};
+
+      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+      if(u.points<precios[item]) return msg.reply("no money");
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:-precios[item]}}
+      );
+
+      if(item==="escudo"){
+        await usersColl.updateOne(
+          {userId:msg.author.id},
+          {$set:{shieldUntil:Date.now()+3600000}}
         );
-        return msg.reply({files:[new AttachmentBuilder(Buffer.from(r.data),"img.png")]});
-      }catch{return msg.reply("error img");}
-    }
+      }
 
-    if(cmd==="universefacts"){
-      let disp=universe.facts.filter(f=>!universe.usedToday.includes(f));
-      if(!disp.length){universe.usedToday=[];disp=universe.facts;}
-      const f=rand(disp);
-      universe.usedToday.push(f);
-      saveUniverse();
-      return msg.reply(f);
+      if(item==="doble"){
+        await usersColl.updateOne(
+          {userId:msg.author.id},
+          {$set:{boostUntil:Date.now()+3600000}}
+        );
+      }
+
+      return msg.reply("comprado");
     }
 
     if(cmd==="place"){
       const img=await renderPlace();
       return msg.reply({files:[new AttachmentBuilder(img,"map.png")]});
-    }
-
-    if(cmd==="zoom"){
-      const img=await renderZoom(0,50,0,50);
-      return msg.reply({files:[new AttachmentBuilder(img,"zoom.png")]});
     }
 
     if(cmd==="pixel"){
@@ -292,15 +311,6 @@ client.on("messageCreate", async msg=>{
         const p1=await getServerPower(existing.guildId);
         const p2=await getServerPower(msg.guild.id);
         cost=p1>p2?1000:200;
-
-        let u=await usersColl.findOne({userId:msg.author.id});
-        if(!u||u.points<cost) return msg.reply("no money");
-
-        await usersColl.updateOne(
-          {userId:msg.author.id},
-          {$inc:{points:-cost}},
-          {upsert:true}
-        );
       }
 
       await placeColl.updateOne(
@@ -312,37 +322,17 @@ client.on("messageCreate", async msg=>{
       return msg.reply(cost?"⚔️":"🎨");
     }
 
-    if(cmd==="topplace"){
-      const top=await placeColl.aggregate([
-        {$group:{_id:"$guildId",total:{$sum:1}}},
-        {$sort:{total:-1}},
-        {$limit:5}
-      ]).toArray();
-
-      return msg.reply(top.map((t,i)=>`${i+1}. ${t.total}`).join("\n"));
-    }
-
-    if(cmd==="bal"){
-      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
-      return msg.reply(`💰 ${u.points}`);
+    if(cmd==="ayudacmd"){
+      return msg.reply("comandos cargados");
     }
 
     return;
   }
 
-  // ================= RESPUESTA =================
+  // ================= IA =================
   msgCounter++;
   if(msgCounter<3 && Math.random()>0.25) return;
   msgCounter=0;
-
-  const asoc=await asociaColl.findOne({clave:content});
-  if(asoc) return msg.reply(asoc.respuesta);
-
-  if(config.modoActual==="normal"){
-    const pool=config.phrases.length?config.phrases:extras.phrases;
-    const r=await IA(msg.content,"normal");
-    return msg.reply(r||rand(pool));
-  }
 
   const r=await IA(msg.content,config.modoActual);
   return msg.reply(r||rand(config.phrases));
