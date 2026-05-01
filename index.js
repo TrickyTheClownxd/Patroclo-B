@@ -1,6 +1,5 @@
 import {
   Client, GatewayIntentBits, Partials,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
   AttachmentBuilder
 } from "discord.js";
 
@@ -16,7 +15,7 @@ dotenv.config();
 // ================= SERVER =================
 http.createServer((req,res)=>res.end("PATROCLO HC ADN+++")).listen(process.env.PORT||8080);
 
-// ================= JSON SAFE =================
+// ================= JSON =================
 function safeJSON(path, def){
   try{
     if(!fs.existsSync(path)){
@@ -42,26 +41,25 @@ const client = new Client({
 
 const mongo = new MongoClient(process.env.MONGO_URI);
 
-// ================= DB COLLS =================
 let usersColl, dataColl, placeColl, asociaColl, userMemColl;
 
-// ================= CONFIG =================
-let config = { phrases:[], modoActual:"ia", motorIA:"gemini" };
+let config = { phrases:[], modoActual:"ia" };
 
-// ================= UTILS =================
-const rand = a => a[Math.floor(Math.random()*a.length)];
-const cortar = t => t ? t.slice(0,1900) : "";
-let msgCounter = 0;
+const rand = a=>a[Math.floor(Math.random()*a.length)];
+const cortar = t=>t?.slice(0,1900);
+
+let msgCounter=0;
 
 // ================= IA =================
 async function IA(contexto, modo){
   let sys;
+
   if(modo==="normal"){
-    sys="Elegí UNA frase de la lista que mejor encaje con el contexto. NO inventes.";
+    sys="Elegí UNA frase del ADN que encaje mejor. NO inventes.";
   } else if(modo==="serio"){
-    sys="Sos un asistente profesional claro y conciso.";
+    sys="Respondé de forma profesional.";
   } else {
-    sys="Sos un pibe argentino sarcástico, divertido y breve.";
+    sys="Sos argentino sarcástico.";
   }
 
   try{
@@ -69,42 +67,40 @@ async function IA(contexto, modo){
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {contents:[{parts:[{text:sys+"\n\n"+contexto}]}]}
     );
-    return r.data?.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  }catch{
-    return null;
-  }
+    return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  }catch{return null;}
 }
 
-// ================= EMOCIONES / REPUTACIÓN =================
+// ================= EMOCIONES =================
 function updateEmotion(userId, content){
   const u = memoria.users[userId] || {messages:[], rep:0, mood:0};
-  // heurística simple
-  const positivos = ["gracias","bien","genial","joya","crack"];
-  const negativos = ["boludo","hdp","forro","pajero","idiota","puto"];
-  let delta = 0;
 
-  if(positivos.some(w=>content.includes(w))) delta += 1;
-  if(negativos.some(w=>content.includes(w))) delta -= 2;
+  const pos = ["gracias","bien","genial","joya","crack"];
+  const neg = ["boludo","hdp","forro","pajero","idiota","puto"];
 
-  u.rep = (u.rep||0) + delta;        // reputación acumulada
-  u.mood = Math.max(-5, Math.min(5, (u.mood||0) + delta)); // estado corto
+  let delta=0;
+  if(pos.some(w=>content.includes(w))) delta+=1;
+  if(neg.some(w=>content.includes(w))) delta-=2;
 
-  memoria.users[userId] = u;
+  u.rep += delta;
+  u.mood = Math.max(-5, Math.min(5, u.mood+delta));
+
+  memoria.users[userId]=u;
 }
 
 function styleByEmotion(userId){
-  const u = memoria.users[userId] || {};
-  if((u.mood||0) <= -3) return "bardea un poco, irónico";
-  if((u.mood||0) >= 3) return "buena onda, cercano";
+  const u = memoria.users[userId]||{};
+  if(u.mood<=-3) return "irónico";
+  if(u.mood>=3) return "amigable";
   return "neutral";
 }
 
-// ================= PLACE (r/place) =================
+// ================= PLACE =================
 const SIZE=128, SCALE=4;
 const cooldown = new Map();
 
-async function getServerPower(guildId){
-  return await placeColl.countDocuments({guildId});
+async function getServerPower(id){
+  return await placeColl.countDocuments({guildId:id});
 }
 
 async function renderPlace(){
@@ -117,6 +113,7 @@ async function renderPlace(){
   }catch{}
 
   const pixels = await placeColl.find().toArray();
+
   pixels.forEach(p=>{
     ctx.fillStyle=p.color;
     ctx.fillRect(p.x*SCALE,p.y*SCALE,SCALE,SCALE);
@@ -147,78 +144,74 @@ async function start(){
   await mongo.connect();
   const db = mongo.db("patroclo_bot");
 
-  usersColl = db.collection("users");
-  dataColl = db.collection("bot_data");
-  placeColl = db.collection("place_pixels");
-  asociaColl = db.collection("asociaciones");
-  userMemColl = db.collection("user_memory");
+  usersColl=db.collection("users");
+  dataColl=db.collection("bot_data");
+  placeColl=db.collection("place_pixels");
+  asociaColl=db.collection("asociaciones");
+  userMemColl=db.collection("user_memory");
 
   const d = await dataColl.findOne({id:"main_config"});
-  if(d) config = {...config, ...d};
 
-  // 🔥 FUSIÓN ADN (Mongo + JSON)
   config.phrases = Array.from(new Set([
-    ...(config.phrases||[]),
+    ...(d?.phrases||[]),
     ...(memoria.phrases||[])
   ]));
-  memoria.phrases = config.phrases;
+
+  memoria.phrases=config.phrases;
   saveMem();
 
   await client.login(process.env.TOKEN);
-  console.log("🔥 ONLINE HC ADN+++");
+  console.log("🔥 ONLINE FULL ADN+++");
 }
 
 // ================= MENSAJES =================
-client.on("messageCreate", async (msg)=>{
+client.on("messageCreate", async msg=>{
   if(!msg.author || msg.author.bot) return;
 
   const content = msg.content.toLowerCase();
 
-  // ===== MEMORIA USUARIO (corto plazo JSON) =====
+  // ===== MEMORIA =====
   if(!memoria.users[msg.author.id]){
-    memoria.users[msg.author.id] = {messages:[], rep:0, mood:0};
+    memoria.users[msg.author.id]={messages:[],rep:0,mood:0};
   }
+
   memoria.users[msg.author.id].messages.push(msg.content);
   if(memoria.users[msg.author.id].messages.length>10){
     memoria.users[msg.author.id].messages.shift();
   }
 
-  // ===== EMOCIONES / REPUTACIÓN =====
   updateEmotion(msg.author.id, content);
 
-  // ===== MEMORIA LARGO PLAZO (Mongo) =====
-  try{
-    await userMemColl.updateOne(
-      {userId: msg.author.id},
-      {
-        $inc: { messagesCount: 1, rep: memoria.users[msg.author.id].rep || 0 },
-        $set: { lastMessage: msg.content }
-      },
-      { upsert: true }
-    );
-  }catch{}
+  await userMemColl.updateOne(
+    {userId:msg.author.id},
+    {$inc:{msg:1}},
+    {upsert:true}
+  );
 
-  // ===== ADN GLOBAL =====
-  if(!msg.content.startsWith("!") && msg.content.length>5){
+  // ===== APRENDIZAJE =====
+  const texto = msg.content.trim().toLowerCase();
+  const esSpam = /(.)\1{6,}/.test(texto);
+
+  if(!msg.content.startsWith("!") && texto.length>1 && !esSpam){
     if(!config.phrases.includes(msg.content)){
       config.phrases.push(msg.content);
-    }
-    if(!memoria.phrases.includes(msg.content)){
       memoria.phrases.push(msg.content);
+
+      await dataColl.updateOne(
+        {id:"main_config"},
+        {$set:{phrases:config.phrases}},
+        {upsert:true}
+      );
+
+      saveMem();
     }
-    await dataColl.updateOne(
-      {id:"main_config"},
-      {$set:{phrases:config.phrases}},
-      {upsert:true}
-    );
-    saveMem();
   }
 
-  // ===== CONTEXTO GLOBAL =====
-  memoria.chat.push(`${msg.author.username}: ${msg.content}`);
+  // ===== CHAT =====
+  memoria.chat.push(msg.content);
   if(memoria.chat.length>20) memoria.chat.shift();
 
-  // ===== REACCIONES AUTO =====
+  // ===== REACCIONES =====
   extras.reacciones_auto?.palabras_clave?.forEach(p=>{
     if(content.includes(p)){
       msg.react(rand(extras.reacciones_auto.emojis||["🔥"])).catch(()=>{});
@@ -230,183 +223,129 @@ client.on("messageCreate", async (msg)=>{
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
 
-    // --- MODO ---
     if(cmd==="modo"){
-      const m = (args[0]||"ia").toLowerCase();
-      if(!["normal","ia","serio"].includes(m)){
-        return msg.reply("Usá: !modo normal | ia | serio");
-      }
-      config.modoActual = m;
-      await dataColl.updateOne({id:"main_config"},{$set:{modoActual:m}},{upsert:true});
-      return msg.reply("Modo: "+m);
+      config.modoActual=args[0]||"ia";
+      return msg.reply("Modo: "+config.modoActual);
     }
 
-    // --- ASOCIA ---
     if(cmd==="asocia"){
-      const txt = args.join(" ").split(">");
-      if(txt.length<2) return msg.reply("uso: !asocia clave > respuesta");
+      const t=args.join(" ").split(">");
       await asociaColl.updateOne(
-        {clave:txt[0].trim().toLowerCase()},
-        {$set:{respuesta:txt[1].trim()}},
+        {clave:t[0].trim().toLowerCase()},
+        {$set:{respuesta:t[1].trim()}},
         {upsert:true}
       );
-      return msg.reply("Guardado.");
+      return msg.reply("ok");
     }
 
-    // --- UNIVERSE ---
-    if(cmd==="universefacts"){
-      let disponibles = universe.facts.filter(f=>!universe.usedToday.includes(f));
-      if(disponibles.length===0){
-        universe.usedToday=[];
-        disponibles=universe.facts;
-      }
-      const fact = rand(disponibles);
-      universe.usedToday.push(fact);
-
-      // si se agotaron, agrego extras
-      if(universe.usedToday.length>=universe.facts.length && extras.facts?.length){
-        universe.facts.push(...extras.facts);
-      }
-      saveUniverse();
-      return msg.reply(fact);
-    }
-
-    // --- GIF ---
     if(cmd==="gif"){
       try{
-        const res = await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`);
-        return msg.reply(res.data.data[0]?.url || "No encontré gif.");
-      }catch{
-        return msg.reply("Giphy caído.");
-      }
+        const r=await axios.get(`https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`);
+        return msg.reply(r.data.data[0]?.url||"no");
+      }catch{return msg.reply("error");}
     }
 
-    // --- FOTO (HF) ---
     if(cmd==="foto"){
       try{
-        const res = await axios.post(
+        const r=await axios.post(
           "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
-          { inputs: args.join(" ") },
-          { headers: { Authorization: `Bearer ${process.env.HF_API_KEY}` }, responseType: "arraybuffer" }
+          {inputs:args.join(" ")},
+          {headers:{Authorization:`Bearer ${process.env.HF_API_KEY}`},responseType:"arraybuffer"}
         );
-        return msg.reply({ files: [new AttachmentBuilder(Buffer.from(res.data), { name: "foto.png" })] });
-      }catch{
-        return msg.reply("No pude generar la imagen.");
-      }
+        return msg.reply({files:[new AttachmentBuilder(Buffer.from(r.data),"img.png")]});
+      }catch{return msg.reply("error img");}
     }
 
-    // --- PLACE ---
+    if(cmd==="universefacts"){
+      let disp=universe.facts.filter(f=>!universe.usedToday.includes(f));
+      if(!disp.length){universe.usedToday=[];disp=universe.facts;}
+      const f=rand(disp);
+      universe.usedToday.push(f);
+      saveUniverse();
+      return msg.reply(f);
+    }
+
     if(cmd==="place"){
-      const img = await renderPlace();
+      const img=await renderPlace();
       return msg.reply({files:[new AttachmentBuilder(img,"map.png")]});
     }
 
     if(cmd==="zoom"){
-      const img = await renderZoom(0,50,0,50);
+      const img=await renderZoom(0,50,0,50);
       return msg.reply({files:[new AttachmentBuilder(img,"zoom.png")]});
     }
 
     if(cmd==="pixel"){
-      const x = parseInt(args[0]);
-      const y = parseInt(args[1]);
-      const color = args[2] || "#ffffff";
+      const x=parseInt(args[0]);
+      const y=parseInt(args[1]);
+      const color=args[2]||"#fff";
 
-      if(isNaN(x)||isNaN(y)) return msg.reply("Uso: !pixel x y #color");
+      const last=cooldown.get(msg.author.id)||0;
+      if(Date.now()-last<3000) return msg.reply("espera");
 
-      const last = cooldown.get(msg.author.id)||0;
-      if(Date.now()-last < 3000) return msg.reply("⏳ Esperá");
-      cooldown.set(msg.author.id, Date.now());
+      cooldown.set(msg.author.id,Date.now());
 
-      const existing = await placeColl.findOne({x,y});
-      let cost = 0;
+      const existing=await placeColl.findOne({x,y});
+      let cost=0;
 
-      if(existing && existing.guildId !== msg.guild.id){
-        const powerEnemy = await getServerPower(existing.guildId);
-        const powerMe = await getServerPower(msg.guild.id);
-        cost = powerEnemy > powerMe ? 1000 : 200;
+      if(existing && existing.guildId!==msg.guild.id){
+        const p1=await getServerPower(existing.guildId);
+        const p2=await getServerPower(msg.guild.id);
+        cost=p1>p2?1000:200;
 
-        let user = await usersColl.findOne({userId:msg.author.id});
-        if(!user || user.points < cost) return msg.reply(`💀 Necesitás $${cost}`);
+        let u=await usersColl.findOne({userId:msg.author.id});
+        if(!u||u.points<cost) return msg.reply("no money");
 
-        await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-cost}},{upsert:true});
+        await usersColl.updateOne(
+          {userId:msg.author.id},
+          {$inc:{points:-cost}},
+          {upsert:true}
+        );
       }
 
       await placeColl.updateOne(
         {x,y},
-        {$set:{color,guildId:msg.guild.id,ownerId:msg.author.id}},
+        {$set:{color,guildId:msg.guild.id}},
         {upsert:true}
       );
 
-      return msg.reply(cost?`⚔️ Conquista $${cost}`:"🎨 Pintado");
+      return msg.reply(cost?"⚔️":"🎨");
     }
 
     if(cmd==="topplace"){
-      const top = await placeColl.aggregate([
+      const top=await placeColl.aggregate([
         {$group:{_id:"$guildId",total:{$sum:1}}},
         {$sort:{total:-1}},
         {$limit:5}
       ]).toArray();
 
-      return msg.reply("🏆\n"+top.map((t,i)=>`${i+1}. ${t._id} → ${t.total}`).join("\n"));
+      return msg.reply(top.map((t,i)=>`${i+1}. ${t.total}`).join("\n"));
     }
 
-    // --- SALDO ---
     if(cmd==="bal"){
-      let user = await usersColl.findOne({userId:msg.author.id}) || {points:0};
-      return msg.reply(`💰 Saldo: $${user.points}`);
+      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+      return msg.reply(`💰 ${u.points}`);
     }
 
     return;
   }
 
-  // ================= TRIGGERS =================
+  // ================= RESPUESTA =================
   msgCounter++;
+  if(msgCounter<3 && Math.random()>0.25) return;
+  msgCounter=0;
 
-  const invocado =
-    msg.mentions.has(client.user.id) ||
-    content.includes("patro");
-
-  const randomTrigger = Math.random() < 0.25;
-  const forcedTrigger = msgCounter >= 3;
-
-  if(!invocado && !randomTrigger && !forcedTrigger) return;
-  msgCounter = 0;
-
-  // ================= ASOCIACIONES =================
-  const asoc = await asociaColl.findOne({clave:content});
+  const asoc=await asociaColl.findOne({clave:content});
   if(asoc) return msg.reply(asoc.respuesta);
 
-  // ================= MODO NORMAL (ADN) =================
   if(config.modoActual==="normal"){
-    const pool = [...config.phrases, ...(extras.phrases||[])].slice(-60);
-
-    const userMem = memoria.users[msg.author.id]?.messages?.join("\n") || "";
-    const style = styleByEmotion(msg.author.id);
-
-    const r = await IA(
-      `Estilo: ${style}
-Contexto global:
-${memoria.chat.join("\n")}
-
-Usuario:
-${userMem}
-
-Frases:
-${pool.join("\n")}`,
-      "normal"
-    );
-
-    if(r && pool.includes(r.trim())){
-      return msg.reply(r.trim());
-    }
-    return msg.reply(rand(pool));
+    const pool=config.phrases.length?config.phrases:extras.phrases;
+    const r=await IA(msg.content,"normal");
+    return msg.reply(r||rand(pool));
   }
 
-  // ================= IA LIBRE =================
-  const style = styleByEmotion(msg.author.id);
-  const r = await IA(`Estilo: ${style}\nMsg: ${msg.content}`, config.modoActual);
-  return msg.reply(r ? cortar(r) : rand(config.phrases));
+  const r=await IA(msg.content,config.modoActual);
+  return msg.reply(r||rand(config.phrases));
 });
 
-// ================= START =================
 start();
