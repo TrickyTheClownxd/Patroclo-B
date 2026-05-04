@@ -1,3 +1,4 @@
+// ================= IMPORTS =================
 import {
   Client, GatewayIntentBits, Partials,
   AttachmentBuilder
@@ -13,7 +14,7 @@ import { createCanvas, loadImage } from "canvas";
 dotenv.config();
 
 // ================= SERVER =================
-http.createServer((req,res)=>res.end("PATROCLO HC FINAL")).listen(process.env.PORT||8080);
+http.createServer((req,res)=>res.end("PATROCLO HC FINAL 100%")).listen(process.env.PORT||8080);
 
 // ================= JSON =================
 function safeJSON(path, def){
@@ -27,7 +28,6 @@ function safeJSON(path, def){
 }
 
 let memoria = safeJSON("./memoria.json",{chat:[],users:{},phrases:[]});
-const extras = safeJSON("./extras.json",{phrases:[],facts:[],reacciones_auto:{}});
 let universe = safeJSON("./universe.json",{facts:[],usedToday:[]});
 
 const saveMem = ()=>fs.writeFileSync("./memoria.json",JSON.stringify(memoria,null,2));
@@ -41,21 +41,19 @@ const client = new Client({
 
 const mongo = new MongoClient(process.env.MONGO_URI);
 
-let usersColl, dataColl, placeColl, asociaColl, userMemColl;
+let usersColl, dataColl, placeColl, asociaColl;
 
 let config = { phrases:[], modoActual:"ia" };
 
 const rand = a=>a[Math.floor(Math.random()*a.length)];
-const cortar = t=>t?.slice(0,1900);
-
 let msgCounter=0;
 
 // ================= IA =================
-async function IA(contexto, modo){
+async function IA(contexto, modo, pool=[]){
   let sys;
 
   if(modo==="normal"){
-    sys="Elegí UNA frase del ADN que encaje mejor. NO inventes.";
+    sys=`Elegí SOLO una frase de esta lista:\n${pool.join("\n")}`;
   } else if(modo==="serio"){
     sys="Respondé profesional.";
   } else {
@@ -82,6 +80,9 @@ async function getServerPower(id){
 async function renderPlace(){
   const canvas = createCanvas(SIZE*SCALE,SIZE*SCALE);
   const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle="#111";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
 
   try{
     const bg = await loadImage("./maps/world.png");
@@ -124,7 +125,6 @@ async function start(){
   dataColl=db.collection("bot_data");
   placeColl=db.collection("place_pixels");
   asociaColl=db.collection("asociaciones");
-  userMemColl=db.collection("user_memory");
 
   const d = await dataColl.findOne({id:"main_config"});
 
@@ -137,7 +137,7 @@ async function start(){
   saveMem();
 
   await client.login(process.env.TOKEN);
-  console.log("🔥 PATROCLO FULL ONLINE");
+  console.log("🔥 HC FINAL 100%");
 }
 
 // ================= MENSAJES =================
@@ -146,9 +146,11 @@ client.on("messageCreate", async msg=>{
 
   const content = msg.content.toLowerCase();
 
-  // ===== APRENDIZAJE =====
-  const texto = msg.content.trim().toLowerCase();
-  if(!msg.content.startsWith("!") && texto.length>1){
+  memoria.chat.push(msg.content);
+  if(memoria.chat.length>20) memoria.chat.shift();
+
+  // ===== ADN =====
+  if(!msg.content.startsWith("!") && msg.content.length>1){
     if(!config.phrases.includes(msg.content)){
       config.phrases.push(msg.content);
       memoria.phrases.push(msg.content);
@@ -166,49 +168,64 @@ client.on("messageCreate", async msg=>{
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
 
+    // ===== HELP =====
+    if(cmd==="ayudacmd"){
+      return msg.reply(`
+📜 COMANDOS COMPLETOS
+
+🎨 !place | !pixel x y color | !zoom x1 x2 y1 y2
+📷 !gif | !foto
+🌌 !universefacts
+💰 !bal | !daily | !work | !pay @user cantidad
+🎰 !slot | !ruleta cant | !coinflip cant | !penal | !bj
+🏪 !comprar escudo | doble
+🧠 !modo | !asocia clave > respuesta
+🏆 !rich | !topplace
+      `);
+    }
+
+    // ===== ECONOMÍA =====
+    async function getUser(id){
+      return await usersColl.findOne({userId:id})||{points:0};
+    }
+
+    function noMoney(u, amt){
+      return (!amt || amt<=0 || u.points<amt);
+    }
+
     if(cmd==="bal"){
-      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+      let u=await getUser(msg.author.id);
       return msg.reply(`💰 ${u.points}`);
     }
 
     if(cmd==="daily"){
-      let u=await usersColl.findOne({userId:msg.author.id})||{};
-      if(Date.now()-(u.lastDaily||0)<86400000) return msg.reply("⏳ ya usado");
-
-      const reward=200+Math.floor(Math.random()*400);
-
-      await usersColl.updateOne(
-        {userId:msg.author.id},
+      let u=await getUser(msg.author.id);
+      if(Date.now()-(u.lastDaily||0)<86400000) return msg.reply("⏳");
+      let reward=200+Math.floor(Math.random()*400);
+      await usersColl.updateOne({userId:msg.author.id},
         {$set:{lastDaily:Date.now()},$inc:{points:reward}},
         {upsert:true}
       );
-
       return msg.reply(`🎁 +$${reward}`);
     }
 
     if(cmd==="work"){
-      let u=await usersColl.findOne({userId:msg.author.id})||{};
+      let u=await getUser(msg.author.id);
       let reward=100+Math.floor(Math.random()*300);
-
-      if(u.boostUntil> Date.now()) reward*=2;
-
-      await usersColl.updateOne(
-        {userId:msg.author.id},
+      if(u.boostUntil>Date.now()) reward*=2;
+      await usersColl.updateOne({userId:msg.author.id},
         {$inc:{points:reward}},
         {upsert:true}
       );
-
       return msg.reply(`💼 +$${reward}`);
     }
 
     if(cmd==="pay"){
       const user=msg.mentions.users.first();
       const amount=parseInt(args[1]);
+      let u=await getUser(msg.author.id);
 
-      if(!user||!amount||amount<=0) return msg.reply("uso: !pay @user cantidad");
-
-      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
-      if(u.points<amount) return msg.reply("no money");
+      if(!user || noMoney(u,amount)) return msg.reply("error");
 
       await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-amount}});
       await usersColl.updateOne({userId:user.id},{$inc:{points:amount}},{upsert:true});
@@ -216,93 +233,83 @@ client.on("messageCreate", async msg=>{
       return msg.reply("💸 enviado");
     }
 
-    if(cmd==="slot"){
-      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
-      if(u.points<50) return msg.reply("no money");
-
-      const r=[rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"])];
-      const win=r[0]===r[1]&&r[1]===r[2]?400:0;
-
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:win-50}});
-
-      return msg.reply(`${r.join("|")} → ${win?"💰":"💀"}`);
-    }
-
-    if(cmd==="ruleta"){
-      const bet=parseInt(args[0]);
-      if(!bet) return msg.reply("apuesta inválida");
-
-      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
-      if(u.points<bet) return msg.reply("no money");
-
-      const win=Math.random()<0.45;
-
-      await usersColl.updateOne(
-        {userId:msg.author.id},
-        {$inc:{points: win?bet:-bet}}
-      );
-
-      return msg.reply(win?"🎉":"💀");
-    }
-
-    if(cmd==="coinflip"){
-      const bet=parseInt(args[0]);
-      if(!bet) return msg.reply("apuesta inválida");
-
-      const win=Math.random()<0.5;
-
-      await usersColl.updateOne(
-        {userId:msg.author.id},
-        {$inc:{points: win?bet:-bet}}
-      );
-
-      return msg.reply(win?"🪙":"💀");
-    }
-
+    // ===== TIENDA =====
     if(cmd==="comprar"){
       const item=args[0];
+      let u=await getUser(msg.author.id);
 
       const precios={escudo:1000,doble:1500};
 
-      let u=await usersColl.findOne({userId:msg.author.id})||{points:0};
-      if(u.points<precios[item]) return msg.reply("no money");
+      if(!precios[item] || u.points<precios[item]) return msg.reply("no money");
 
-      await usersColl.updateOne(
-        {userId:msg.author.id},
-        {$inc:{points:-precios[item]}}
-      );
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-precios[item]}});
 
       if(item==="escudo"){
-        await usersColl.updateOne(
-          {userId:msg.author.id},
-          {$set:{shieldUntil:Date.now()+3600000}}
-        );
+        await usersColl.updateOne({userId:msg.author.id},{$set:{shieldUntil:Date.now()+3600000}});
       }
 
       if(item==="doble"){
-        await usersColl.updateOne(
-          {userId:msg.author.id},
-          {$set:{boostUntil:Date.now()+3600000}}
-        );
+        await usersColl.updateOne({userId:msg.author.id},{$set:{boostUntil:Date.now()+3600000}});
       }
 
       return msg.reply("comprado");
     }
 
-    if(cmd==="place"){
-      const img=await renderPlace();
-      return msg.reply({files:[new AttachmentBuilder(img,"map.png")]});
+    // ===== CASINO =====
+    if(cmd==="slot"){
+      let u=await getUser(msg.author.id);
+      if(noMoney(u,50)) return msg.reply("no money");
+
+      const r=[rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"])];
+      const win=r[0]===r[1]&&r[1]===r[2]?400:0;
+
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:win-50}});
+      return msg.reply(`${r.join("|")} → ${win?"💰":"💀"}`);
     }
 
+    if(cmd==="ruleta"){
+      const bet=parseInt(args[0]);
+      let u=await getUser(msg.author.id);
+      if(noMoney(u,bet)) return msg.reply("no money");
+
+      const win=Math.random()<0.45;
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?bet:-bet}});
+      return msg.reply(win?"🎉":"💀");
+    }
+
+    if(cmd==="coinflip"){
+      const bet=parseInt(args[0]);
+      let u=await getUser(msg.author.id);
+      if(noMoney(u,bet)) return msg.reply("no money");
+
+      const win=Math.random()<0.5;
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?bet:-bet}});
+      return msg.reply(win?"🪙":"💀");
+    }
+
+    if(cmd==="penal"){
+      let u=await getUser(msg.author.id);
+      if(noMoney(u,100)) return msg.reply("no money");
+
+      const win=Math.random()<0.3;
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?500:-100}});
+      return msg.reply(win?"⚽ GOL":"❌ ATAJADO");
+    }
+
+    if(cmd==="bj"){
+      let u=await getUser(msg.author.id);
+      if(noMoney(u,150)) return msg.reply("no money");
+
+      const win=Math.random()<0.48;
+      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?300:-150}});
+      return msg.reply(win?"🃏 ganaste":"💀 perdiste");
+    }
+
+    // ===== MAPA =====
     if(cmd==="pixel"){
       const x=parseInt(args[0]);
       const y=parseInt(args[1]);
       const color=args[2]||"#fff";
-
-      const last=cooldown.get(msg.author.id)||0;
-      if(Date.now()-last<3000) return msg.reply("espera");
-
-      cooldown.set(msg.author.id,Date.now());
 
       const existing=await placeColl.findOne({x,y});
       let cost=0;
@@ -311,58 +318,48 @@ client.on("messageCreate", async msg=>{
         const p1=await getServerPower(existing.guildId);
         const p2=await getServerPower(msg.guild.id);
         cost=p1>p2?1000:200;
+
+        let u=await getUser(msg.author.id);
+        if(u.points<cost) return msg.reply("no money");
+
+        await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-cost}});
       }
 
       await placeColl.updateOne(
         {x,y},
-        {$set:{color,guildId:msg.guild.id}},
+        {$set:{color,guildId:msg.guild.id,ownerId:msg.author.id}},
         {upsert:true}
       );
 
       return msg.reply(cost?"⚔️":"🎨");
     }
 
-    if(cmd==="ayudacmd"){
-  return msg.reply(`
-📜 **PATROCLO COMANDOS**
+    if(cmd==="place"){
+      const img=await renderPlace();
+      return msg.reply({files:[new AttachmentBuilder(img,"map.png")]});
+    }
 
-🎨 MAPA
-!place → ver mapa
-!pixel x y color → dibujar
-!zoom x1 x2 y1 y2 → zoom
+    if(cmd==="zoom"){
+      const [x1,x2,y1,y2]=args.map(Number);
+      const img=await renderZoom(x1||0,x2||50,y1||0,y2||50);
+      return msg.reply({files:[new AttachmentBuilder(img,"zoom.png")]});
+    }
 
-📷 MULTIMEDIA
-!gif palabra → buscar gif
-!foto palabra → generar imagen
+    // ===== RANK =====
+    if(cmd==="rich"){
+      const top=await usersColl.find().sort({points:-1}).limit(5).toArray();
+      return msg.reply(top.map((u,i)=>`${i+1}. ${u.points}`).join("\n"));
+    }
 
-🌌 EXTRA
-!universefacts → dato del universo
+    if(cmd==="topplace"){
+      const top=await placeColl.aggregate([
+        {$group:{_id:"$guildId",total:{$sum:1}}},
+        {$sort:{total:-1}},
+        {$limit:5}
+      ]).toArray();
 
-💰 ECONOMÍA
-!bal → dinero
-!daily → recompensa diaria
-!work → ganar plata
-!pay @user cantidad → transferir
-
-🎰 CASINO
-!slot → tragamonedas
-!ruleta cantidad → apostar
-!coinflip cantidad → cara/cruz
-
-🏪 TIENDA
-!comprar escudo → protección
-!comprar doble → x2 ganancias
-
-🧠 IA
-!modo normal | ia | serio
-
-🏆 RANKING
-!topplace → servidores
-!rich → usuarios
-
-🔥 El bot aprende solo del chat
-  `);
-}
+      return msg.reply(top.map((t,i)=>`${i+1}. ${t.total}`).join("\n"));
+    }
 
     return;
   }
@@ -371,6 +368,15 @@ client.on("messageCreate", async msg=>{
   msgCounter++;
   if(msgCounter<3 && Math.random()>0.25) return;
   msgCounter=0;
+
+  const asoc=await asociaColl.findOne({clave:content});
+  if(asoc) return msg.reply(asoc.respuesta);
+
+  if(config.modoActual==="normal"){
+    const pool=config.phrases.slice(-50);
+    const r=await IA(msg.content,"normal",pool);
+    return msg.reply(r||rand(pool));
+  }
 
   const r=await IA(msg.content,config.modoActual);
   return msg.reply(r||rand(config.phrases));
