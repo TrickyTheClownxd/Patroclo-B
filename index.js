@@ -1,6 +1,7 @@
-// ================= IMPORTS =================
 import {
-  Client, GatewayIntentBits, Partials,
+  Client,
+  GatewayIntentBits,
+  Partials,
   AttachmentBuilder
 } from "discord.js";
 
@@ -14,7 +15,7 @@ import { createCanvas, loadImage } from "canvas";
 dotenv.config();
 
 // ================= SERVER =================
-http.createServer((req,res)=>res.end("PATROCLO HC FINAL 100%")).listen(process.env.PORT||8080);
+http.createServer((req,res)=>res.end("PATROCLO HC FINAL")).listen(process.env.PORT||8080);
 
 // ================= JSON =================
 function safeJSON(path, def){
@@ -28,6 +29,7 @@ function safeJSON(path, def){
 }
 
 let memoria = safeJSON("./memoria.json",{chat:[],users:{},phrases:[]});
+const extras = safeJSON("./extras.json",{phrases:[],facts:[],reacciones_auto:{}});
 let universe = safeJSON("./universe.json",{facts:[],usedToday:[]});
 
 const saveMem = ()=>fs.writeFileSync("./memoria.json",JSON.stringify(memoria,null,2));
@@ -35,43 +37,55 @@ const saveUniverse = ()=>fs.writeFileSync("./universe.json",JSON.stringify(unive
 
 // ================= CLIENT =================
 const client = new Client({
-  intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent],
+  intents:[
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ],
   partials:[Partials.Channel]
 });
 
 const mongo = new MongoClient(process.env.MONGO_URI);
 
-let usersColl, dataColl, placeColl, asociaColl;
+// ================= DBS =================
+let usersColl;
+let dataColl;
+let placeColl;
+let asociaColl;
+let userMemColl;
+let lotsColl;
+let warsColl;
+let casinoColl;
 
-let config = { phrases:[], modoActual:"ia" };
+// ================= CONFIG =================
+let config = {
+  phrases:[],
+  modoActual:"ia"
+};
 
 const rand = a=>a[Math.floor(Math.random()*a.length)];
+const cortar=t=>t?.slice(0,1900);
+
 let msgCounter=0;
 
-// ================= IA =================
-async function IA(contexto, modo, pool=[]){
-  let sys;
+// ================= MAPA =================
+const SIZE=256;
+const SCALE=4;
 
-  if(modo==="normal"){
-    sys=`Elegí SOLO una frase de esta lista:\n${pool.join("\n")}`;
-  } else if(modo==="serio"){
-    sys="Respondé profesional.";
-  } else {
-    sys="Sos argentino sarcástico.";
-  }
-
-  try{
-    const r = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {contents:[{parts:[{text:sys+"\n\n"+contexto}]}]}
-    );
-    return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  }catch{return null;}
-}
-
-// ================= PLACE =================
-const SIZE=128, SCALE=4;
 const cooldown = new Map();
+
+function latLonToXY(lat, lon){
+  lat = Math.max(-90, Math.min(90, lat));
+  lon = Math.max(-180, Math.min(180, lon));
+
+  const x = ((lon + 180) / 360) * (SIZE - 1);
+  const y = ((90 - lat) / 180) * (SIZE - 1);
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y)
+  };
+}
 
 async function getServerPower(id){
   return await placeColl.countDocuments({guildId:id});
@@ -80,9 +94,6 @@ async function getServerPower(id){
 async function renderPlace(){
   const canvas = createCanvas(SIZE*SCALE,SIZE*SCALE);
   const ctx = canvas.getContext("2d");
-
-  ctx.fillStyle="#111";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
 
   try{
     const bg = await loadImage("./maps/world.png");
@@ -100,31 +111,72 @@ async function renderPlace(){
 }
 
 async function renderZoom(minX,maxX,minY,maxY){
-  const canvas = createCanvas((maxX-minX)*SCALE,(maxY-minY)*SCALE);
-  const ctx = canvas.getContext("2d");
+  const width=(maxX-minX)+1;
+  const height=(maxY-minY)+1;
 
-  const pixels = await placeColl.find({
+  const canvas=createCanvas(width*SCALE,height*SCALE);
+  const ctx=canvas.getContext("2d");
+
+  const pixels=await placeColl.find({
     x:{$gte:minX,$lte:maxX},
     y:{$gte:minY,$lte:maxY}
   }).toArray();
 
   pixels.forEach(p=>{
     ctx.fillStyle=p.color;
-    ctx.fillRect((p.x-minX)*SCALE,(p.y-minY)*SCALE,SCALE,SCALE);
+    ctx.fillRect(
+      (p.x-minX)*SCALE,
+      (p.y-minY)*SCALE,
+      SCALE,
+      SCALE
+    );
   });
 
   return canvas.toBuffer();
 }
 
+// ================= IA =================
+async function IA(contexto, modo){
+  let sys;
+
+  if(modo==="normal"){
+    sys="Elegí UNA frase del ADN que encaje mejor. NO inventes.";
+  }else if(modo==="serio"){
+    sys="Respondé profesional y claro.";
+  }else{
+    sys="Sos argentino sarcástico y divertido.";
+  }
+
+  try{
+    const r = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        contents:[{
+          parts:[{text:sys+"\n\n"+contexto}]
+        }]
+      }
+    );
+
+    return r.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  }catch{
+    return null;
+  }
+}
+
 // ================= START =================
 async function start(){
   await mongo.connect();
+
   const db = mongo.db("patroclo_bot");
 
   usersColl=db.collection("users");
   dataColl=db.collection("bot_data");
   placeColl=db.collection("place_pixels");
   asociaColl=db.collection("asociaciones");
+  userMemColl=db.collection("user_memory");
+  lotsColl=db.collection("lots");
+  warsColl=db.collection("wars");
+  casinoColl=db.collection("casino_stats");
 
   const d = await dataColl.findOne({id:"main_config"});
 
@@ -137,7 +189,8 @@ async function start(){
   saveMem();
 
   await client.login(process.env.TOKEN);
-  console.log("🔥 HC FINAL 100%");
+
+  console.log("🔥 PATROCLO HC FINAL ONLINE");
 }
 
 // ================= MENSAJES =================
@@ -146,19 +199,20 @@ client.on("messageCreate", async msg=>{
 
   const content = msg.content.toLowerCase();
 
-  memoria.chat.push(msg.content);
-  if(memoria.chat.length>20) memoria.chat.shift();
+  // ===== APRENDIZAJE =====
+  const texto = msg.content.trim().toLowerCase();
 
-  // ===== ADN =====
-  if(!msg.content.startsWith("!") && msg.content.length>1){
+  if(!msg.content.startsWith("!") && texto.length>1){
     if(!config.phrases.includes(msg.content)){
       config.phrases.push(msg.content);
       memoria.phrases.push(msg.content);
+
       await dataColl.updateOne(
         {id:"main_config"},
         {$set:{phrases:config.phrases}},
         {upsert:true}
       );
+
       saveMem();
     }
   }
@@ -168,218 +222,505 @@ client.on("messageCreate", async msg=>{
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
 
-    // ===== HELP =====
-    if(cmd==="ayudacmd"){
-      return msg.reply(`
-📜 COMANDOS COMPLETOS
-
-🎨 !place | !pixel x y color | !zoom x1 x2 y1 y2
-📷 !gif | !foto
-🌌 !universefacts
-💰 !bal | !daily | !work | !pay @user cantidad
-🎰 !slot | !ruleta cant | !coinflip cant | !penal | !bj
-🏪 !comprar escudo | doble
-🧠 !modo | !asocia clave > respuesta
-🏆 !rich | !topplace
-      `);
+    // ================= IA =================
+    if(cmd==="modo"){
+      config.modoActual=args[0]||"ia";
+      return msg.reply("🧠 modo: "+config.modoActual);
     }
 
-    // ===== ECONOMÍA =====
-    async function getUser(id){
-      return await usersColl.findOne({userId:id})||{points:0};
+    if(cmd==="asocia"){
+      const t=args.join(" ").split(">");
+
+      await asociaColl.updateOne(
+        {clave:t[0].trim().toLowerCase()},
+        {$set:{respuesta:t[1].trim()}},
+        {upsert:true}
+      );
+
+      return msg.reply("✅ asociación guardada");
     }
 
-    function noMoney(u, amt){
-      return (!amt || amt<=0 || u.points<amt);
+    // ================= MULTIMEDIA =================
+    if(cmd==="gif"){
+      try{
+        const r=await axios.get(
+          `https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`
+        );
+
+        return msg.reply(r.data.data[0]?.url||"no encontré");
+      }catch{
+        return msg.reply("❌ error gif");
+      }
     }
 
+    if(cmd==="foto"){
+      try{
+        const r = await axios.post(
+          "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
+          {inputs:args.join(" ")},
+          {
+            headers:{
+              Authorization:`Bearer ${process.env.HF_API_KEY}`
+            },
+            responseType:"arraybuffer"
+          }
+        );
+
+        return msg.reply({
+          files:[
+            new AttachmentBuilder(Buffer.from(r.data),"img.png")
+          ]
+        });
+      }catch{
+        return msg.reply("❌ error imagen");
+      }
+    }
+
+    // ================= ECONOMIA =================
     if(cmd==="bal"){
-      let u=await getUser(msg.author.id);
+      const u=await usersColl.findOne({userId:msg.author.id})||{points:0};
       return msg.reply(`💰 ${u.points}`);
     }
 
     if(cmd==="daily"){
-      let u=await getUser(msg.author.id);
-      if(Date.now()-(u.lastDaily||0)<86400000) return msg.reply("⏳");
-      let reward=200+Math.floor(Math.random()*400);
-      await usersColl.updateOne({userId:msg.author.id},
-        {$set:{lastDaily:Date.now()},$inc:{points:reward}},
+      const u=await usersColl.findOne({userId:msg.author.id})||{};
+
+      if(Date.now()-(u.lastDaily||0)<86400000){
+        return msg.reply("⏳ ya reclamaste hoy");
+      }
+
+      const reward=200+Math.floor(Math.random()*500);
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {
+          $set:{lastDaily:Date.now()},
+          $inc:{points:reward}
+        },
         {upsert:true}
       );
+
       return msg.reply(`🎁 +$${reward}`);
     }
 
     if(cmd==="work"){
-      let u=await getUser(msg.author.id);
-      let reward=100+Math.floor(Math.random()*300);
-      if(u.boostUntil>Date.now()) reward*=2;
-      await usersColl.updateOne({userId:msg.author.id},
+      const reward=100+Math.floor(Math.random()*300);
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
         {$inc:{points:reward}},
         {upsert:true}
       );
-      return msg.reply(`💼 +$${reward}`);
+
+      return msg.reply(`💼 trabajaste y ganaste $${reward}`);
     }
 
     if(cmd==="pay"){
       const user=msg.mentions.users.first();
       const amount=parseInt(args[1]);
-      let u=await getUser(msg.author.id);
 
-      if(!user || noMoney(u,amount)) return msg.reply("error");
+      if(!user || !amount || amount<=0){
+        return msg.reply("uso: !pay @user cantidad");
+      }
 
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-amount}});
-      await usersColl.updateOne({userId:user.id},{$inc:{points:amount}},{upsert:true});
+      const u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+
+      if(u.points<amount){
+        return msg.reply("❌ no money");
+      }
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:-amount}}
+      );
+
+      await usersColl.updateOne(
+        {userId:user.id},
+        {$inc:{points:amount}},
+        {upsert:true}
+      );
 
       return msg.reply("💸 enviado");
     }
 
-    // ===== TIENDA =====
-    if(cmd==="comprar"){
-      const item=args[0];
-      let u=await getUser(msg.author.id);
-
-      const precios={escudo:1000,doble:1500};
-
-      if(!precios[item] || u.points<precios[item]) return msg.reply("no money");
-
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-precios[item]}});
-
-      if(item==="escudo"){
-        await usersColl.updateOne({userId:msg.author.id},{$set:{shieldUntil:Date.now()+3600000}});
-      }
-
-      if(item==="doble"){
-        await usersColl.updateOne({userId:msg.author.id},{$set:{boostUntil:Date.now()+3600000}});
-      }
-
-      return msg.reply("comprado");
-    }
-
-    // ===== CASINO =====
+    // ================= CASINO =================
     if(cmd==="slot"){
-      let u=await getUser(msg.author.id);
-      if(noMoney(u,50)) return msg.reply("no money");
+      const bet=50;
 
-      const r=[rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"]),rand(["🍒","💎","7️⃣"])];
+      const r=[
+        rand(["🍒","💎","7️⃣"]),
+        rand(["🍒","💎","7️⃣"]),
+        rand(["🍒","💎","7️⃣"])
+      ];
+
       const win=r[0]===r[1]&&r[1]===r[2]?400:0;
 
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points:win-50}});
-      return msg.reply(`${r.join("|")} → ${win?"💰":"💀"}`);
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:win-bet}},
+        {upsert:true}
+      );
+
+      return msg.reply(`${r.join(" | ")} → ${win?`💰 +${win}`:"💀"}`);
     }
 
     if(cmd==="ruleta"){
       const bet=parseInt(args[0]);
-      let u=await getUser(msg.author.id);
-      if(noMoney(u,bet)) return msg.reply("no money");
+      if(!bet) return msg.reply("❌ apuesta inválida");
 
       const win=Math.random()<0.45;
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?bet:-bet}});
-      return msg.reply(win?"🎉":"💀");
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:win?bet:-bet}},
+        {upsert:true}
+      );
+
+      return msg.reply(win?"🎉 GANASTE":"💀 perdiste");
     }
 
     if(cmd==="coinflip"){
       const bet=parseInt(args[0]);
-      let u=await getUser(msg.author.id);
-      if(noMoney(u,bet)) return msg.reply("no money");
+      if(!bet) return msg.reply("❌ apuesta inválida");
 
       const win=Math.random()<0.5;
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?bet:-bet}});
-      return msg.reply(win?"🪙":"💀");
-    }
 
-    if(cmd==="penal"){
-      let u=await getUser(msg.author.id);
-      if(noMoney(u,100)) return msg.reply("no money");
-
-      const win=Math.random()<0.3;
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?500:-100}});
-      return msg.reply(win?"⚽ GOL":"❌ ATAJADO");
-    }
-
-    if(cmd==="bj"){
-      let u=await getUser(msg.author.id);
-      if(noMoney(u,150)) return msg.reply("no money");
-
-      const win=Math.random()<0.48;
-      await usersColl.updateOne({userId:msg.author.id},{$inc:{points: win?300:-150}});
-      return msg.reply(win?"🃏 ganaste":"💀 perdiste");
-    }
-
-    // ===== MAPA =====
-    if(cmd==="pixel"){
-      const x=parseInt(args[0]);
-      const y=parseInt(args[1]);
-      const color=args[2]||"#fff";
-
-      const existing=await placeColl.findOne({x,y});
-      let cost=0;
-
-      if(existing && existing.guildId!==msg.guild.id){
-        const p1=await getServerPower(existing.guildId);
-        const p2=await getServerPower(msg.guild.id);
-        cost=p1>p2?1000:200;
-
-        let u=await getUser(msg.author.id);
-        if(u.points<cost) return msg.reply("no money");
-
-        await usersColl.updateOne({userId:msg.author.id},{$inc:{points:-cost}});
-      }
-
-      await placeColl.updateOne(
-        {x,y},
-        {$set:{color,guildId:msg.guild.id,ownerId:msg.author.id}},
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:win?bet:-bet}},
         {upsert:true}
       );
 
-      return msg.reply(cost?"⚔️":"🎨");
+      return msg.reply(win?"🪙 GANASTE":"💀 perdiste");
     }
 
+    if(cmd==="poker"){
+      const bet=parseInt(args[0])||100;
+
+      const hands=[
+        ["Par",1.5],
+        ["Doble Par",2],
+        ["Trío",3],
+        ["Escalera",5],
+        ["Color",8]
+      ];
+
+      const hand=rand(hands);
+      const gain=Math.floor(bet*hand[1]);
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:gain-bet}},
+        {upsert:true}
+      );
+
+      return msg.reply(`🃏 ${hand[0]} → +$${gain}`);
+    }
+
+    if(cmd==="balatro"){
+      const bet=parseInt(args[0])||100;
+
+      const multi=Math.floor(Math.random()*20)+1;
+      const gain=bet*multi;
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:gain-bet}},
+        {upsert:true}
+      );
+
+      return msg.reply(`🎴 BALATRO x${multi} → +$${gain}`);
+    }
+
+    if(cmd==="bj"){
+      const bet=parseInt(args[0])||100;
+
+      const player=Math.floor(Math.random()*11)+15;
+      const dealer=Math.floor(Math.random()*11)+15;
+
+      let result;
+      let delta;
+
+      if(player>21){
+        result="💀 te pasaste";
+        delta=-bet;
+      }else if(dealer>21 || player>dealer){
+        result="🎉 ganaste";
+        delta=bet;
+      }else{
+        result="💀 perdiste";
+        delta=-bet;
+      }
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:delta}},
+        {upsert:true}
+      );
+
+      return msg.reply(`🃏 vos:${player} dealer:${dealer}\n${result}`);
+    }
+
+    if(cmd==="penal"){
+      const bet=parseInt(args[0])||100;
+
+      const gol=Math.random()<0.6;
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:gol?bet:-bet}},
+        {upsert:true}
+      );
+
+      return msg.reply(gol?"⚽ GOL":"🧤 ATAJADO");
+    }
+
+    // ================= MAPA =================
     if(cmd==="place"){
       const img=await renderPlace();
-      return msg.reply({files:[new AttachmentBuilder(img,"map.png")]});
+
+      return msg.reply({
+        files:[new AttachmentBuilder(img,"map.png")]
+      });
     }
 
     if(cmd==="zoom"){
-      const [x1,x2,y1,y2]=args.map(Number);
-      const img=await renderZoom(x1||0,x2||50,y1||0,y2||50);
-      return msg.reply({files:[new AttachmentBuilder(img,"zoom.png")]});
+      const x1=parseInt(args[0]);
+      const x2=parseInt(args[1]);
+      const y1=parseInt(args[2]);
+      const y2=parseInt(args[3]);
+
+      const img=await renderZoom(x1,x2,y1,y2);
+
+      return msg.reply({
+        files:[new AttachmentBuilder(img,"zoom.png")]
+      });
     }
 
-    // ===== RANK =====
-    if(cmd==="rich"){
-      const top=await usersColl.find().sort({points:-1}).limit(5).toArray();
-      return msg.reply(top.map((u,i)=>`${i+1}. ${u.points}`).join("\n"));
+    if(cmd==="zoomlat"){
+      const lat1=parseFloat(args[0]);
+      const lon1=parseFloat(args[1]);
+      const lat2=parseFloat(args[2]);
+      const lon2=parseFloat(args[3]);
+
+      const p1=latLonToXY(lat1,lon1);
+      const p2=latLonToXY(lat2,lon2);
+
+      const minX=Math.min(p1.x,p2.x);
+      const maxX=Math.max(p1.x,p2.x);
+      const minY=Math.min(p1.y,p2.y);
+      const maxY=Math.max(p1.y,p2.y);
+
+      const img=await renderZoom(minX,maxX,minY,maxY);
+
+      return msg.reply({
+        files:[new AttachmentBuilder(img,"zoom.png")]
+      });
+    }
+
+    if(cmd==="pixel"){
+      let x;
+      let y;
+
+      const a=parseFloat(args[0]);
+      const b=parseFloat(args[1]);
+
+      if(a>=-90 && a<=90 && b>=-180 && b<=180){
+        const pos=latLonToXY(a,b);
+        x=pos.x;
+        y=pos.y;
+      }else{
+        x=parseInt(args[0]);
+        y=parseInt(args[1]);
+      }
+
+      const color=args[2]||"#fff";
+
+      if(x<0 || x>=SIZE || y<0 || y>=SIZE){
+        return msg.reply("❌ fuera del mapa");
+      }
+
+      const last=cooldown.get(msg.author.id)||0;
+
+      if(Date.now()-last<3000){
+        return msg.reply("⏳ espera 3 segundos");
+      }
+
+      cooldown.set(msg.author.id,Date.now());
+
+      await placeColl.updateOne(
+        {x,y},
+        {
+          $set:{
+            color,
+            guildId:msg.guild.id
+          }
+        },
+        {upsert:true}
+      );
+
+      return msg.reply(`🎨 pixel puesto (${x},${y})`);
     }
 
     if(cmd==="topplace"){
       const top=await placeColl.aggregate([
         {$group:{_id:"$guildId",total:{$sum:1}}},
         {$sort:{total:-1}},
-        {$limit:5}
+        {$limit:10}
       ]).toArray();
 
-      return msg.reply(top.map((t,i)=>`${i+1}. ${t.total}`).join("\n"));
+      return msg.reply(
+        top.map((t,i)=>`${i+1}. ${t.total} px`).join("\n")
+      );
+    }
+
+    if(cmd==="territorio"){
+      const total=await placeColl.countDocuments({guildId:msg.guild.id});
+      return msg.reply(`🌍 territorio del server: ${total} píxeles`);
+    }
+
+    if(cmd==="comprarlote"){
+      const x1=parseInt(args[0]);
+      const y1=parseInt(args[1]);
+      const x2=parseInt(args[2]);
+      const y2=parseInt(args[3]);
+
+      const width=Math.abs(x2-x1)+1;
+      const height=Math.abs(y2-y1)+1;
+
+      const cost=width*height*10;
+
+      const u=await usersColl.findOne({userId:msg.author.id})||{points:0};
+
+      if(u.points<cost){
+        return msg.reply(`❌ necesitás $${cost}`);
+      }
+
+      await usersColl.updateOne(
+        {userId:msg.author.id},
+        {$inc:{points:-cost}}
+      );
+
+      await lotsColl.insertOne({
+        ownerId:msg.author.id,
+        guildId:msg.guild.id,
+        x1,y1,x2,y2,
+        createdAt:Date.now()
+      });
+
+      return msg.reply(`🏠 lote comprado por $${cost}`);
+    }
+
+    if(cmd==="guerra"){
+      await warsColl.updateOne(
+        {guildId:msg.guild.id},
+        {$set:{active:true,start:Date.now()}},
+        {upsert:true}
+      );
+
+      return msg.reply("⚔️ guerra activada");
+    }
+
+    // ================= RANKINGS =================
+    if(cmd==="rich"){
+      const top=await usersColl.find()
+        .sort({points:-1})
+        .limit(10)
+        .toArray();
+
+      return msg.reply(
+        top.map((u,i)=>`${i+1}. $${u.points}`).join("\n")
+      );
+    }
+
+    if(cmd==="casinotop"){
+      const top=await usersColl.find()
+        .sort({points:-1})
+        .limit(10)
+        .toArray();
+
+      return msg.reply(
+        top.map((u,i)=>`${i+1}. $${u.points}`).join("\n")
+      );
+    }
+
+    // ================= UNIVERSO =================
+    if(cmd==="universefacts"){
+      let disp=universe.facts.filter(f=>!universe.usedToday.includes(f));
+
+      if(!disp.length){
+        universe.usedToday=[];
+        disp=universe.facts;
+      }
+
+      const f=rand(disp);
+
+      universe.usedToday.push(f);
+      saveUniverse();
+
+      return msg.reply(f||"🌌 no hay datos");
+    }
+
+    // ================= AYUDA =================
+    if(cmd==="ayudacmd"){
+      return msg.reply(`
+📜 PATROCLO HC FINAL
+
+🎨 MAPA
+!place
+!pixel
+!zoom
+!zoomlat
+!territorio
+!comprarlote
+!guerra
+!topplace
+
+📷 MULTIMEDIA
+!gif
+!foto
+
+🌌 EXTRAS
+!universefacts
+
+💰 ECONOMÍA
+!bal
+!daily
+!work
+!pay
+!rich
+
+🎰 CASINO
+!slot
+!ruleta
+!coinflip
+!bj
+!poker
+!balatro
+!penal
+!casinotop
+
+🧠 IA
+!modo
+!asocia
+
+🔥 aprende automáticamente
+      `);
     }
 
     return;
   }
 
-  // ================= IA =================
+  // ================= RESPUESTAS IA =================
   msgCounter++;
+
   if(msgCounter<3 && Math.random()>0.25) return;
+
   msgCounter=0;
 
-  const asoc=await asociaColl.findOne({clave:content});
-  if(asoc) return msg.reply(asoc.respuesta);
-
-  if(config.modoActual==="normal"){
-    const pool=config.phrases.slice(-50);
-    const r=await IA(msg.content,"normal",pool);
-    return msg.reply(r||rand(pool));
-  }
-
   const r=await IA(msg.content,config.modoActual);
-  return msg.reply(r||rand(config.phrases));
+
+  return msg.reply(r||rand(config.phrases)||"...lol");
 });
 
 start();
