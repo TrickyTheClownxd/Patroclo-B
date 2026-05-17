@@ -752,9 +752,26 @@ ${msg.content}`;
 
 const r = await IA(contexto, config.modoActual);
 
-return msg.reply(
-  r || rand(config.phrases) || "...lol"
-);
+let finalReply = r || rand(config.phrases) || "...";
+
+finalReply = String(finalReply).trim();
+
+if(
+  finalReply.length <= 1 ||
+  finalReply === "u" ||
+  finalReply === "undefined"
+){
+  finalReply = rand([
+    "XD",
+    "na bueno",
+    "qué",
+    "patroclo quedó pensando",
+    "._.",
+    "💀"
+  ]);
+}
+
+return msg.reply(finalReply);
 
 });
 
