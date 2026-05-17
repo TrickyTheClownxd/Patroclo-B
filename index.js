@@ -712,15 +712,50 @@ client.on("messageCreate", async msg=>{
   }
 
   // ================= RESPUESTAS IA =================
-  msgCounter++;
 
+const esReply = !!msg.reference;
+
+msgCounter++;
+
+if(!esReply){
   if(msgCounter<3 && Math.random()>0.25) return;
+}
 
-  msgCounter=0;
+msgCounter=0;
 
-  const r=await IA(msg.content,config.modoActual);
+// asociaciones inteligentes
+const allAsoc = await asociaColl.find().toArray();
 
-  return msg.reply(r||rand(config.phrases)||"...lol");
+const asoc = allAsoc.find(a =>
+  content.includes(a.clave)
+);
+
+if(asoc){
+  return msg.reply(asoc.respuesta);
+}
+
+// contexto IA
+let contexto = msg.content;
+
+if(esReply){
+  try{
+    const replied = await msg.fetchReference();
+
+    contexto =
+`MENSAJE ORIGINAL:
+${replied.content}
+
+RESPUESTA DEL USUARIO:
+${msg.content}`;
+  }catch{}
+}
+
+const r = await IA(contexto, config.modoActual);
+
+return msg.reply(
+  r || rand(config.phrases) || "...lol"
+);
+
 });
 
 start();
