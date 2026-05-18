@@ -726,9 +726,13 @@ msgCounter=0;
 // asociaciones inteligentes
 const allAsoc = await asociaColl.find().toArray();
 
-const asoc = allAsoc.find(a =>
-  content.includes(a.clave)
-);
+const asoc = allAsoc.find(a => {
+  const clave = a.clave?.toLowerCase()?.trim();
+
+  if(!clave || clave.length < 2) return false;
+
+  return content.includes(clave);
+});
 
 if(asoc){
   return msg.reply(asoc.respuesta);
