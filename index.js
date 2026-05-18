@@ -752,7 +752,16 @@ ${msg.content}`;
 
 const r = await IA(contexto, config.modoActual);
 
-let finalReply = r || rand(config.phrases) || "...";
+let finalReply;
+
+if(!r || r.length <= 1){
+  finalReply =
+    rand(config.phrases) ||
+    rand(extras.phrases) ||
+    "💀";
+}else{
+  finalReply = r;
+}
 
 finalReply = String(finalReply).trim();
 
@@ -761,14 +770,10 @@ if(
   finalReply === "u" ||
   finalReply === "undefined"
 ){
-  finalReply = rand([
-    "XD",
-    "na bueno",
-    "qué",
-    "patroclo quedó pensando",
-    "._.",
-    "💀"
-  ]);
+  finalReply =
+    rand(config.phrases) ||
+    rand(extras.phrases) ||
+    "💀";
 }
 
 return msg.reply(finalReply);
