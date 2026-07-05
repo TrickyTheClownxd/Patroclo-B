@@ -884,7 +884,6 @@ client.on("messageCreate", async msg => {
   // ================= RESPUESTAS IA (solo si no es comando) =================
   const esReply = !!msg.reference;
 
-  // Asociaciones (tienen prioridad)
   const allAsoc = await asociaColl.find().toArray();
   const asoc = allAsoc.find(a => content.includes(a.clave?.toLowerCase()?.trim()));
   if (asoc) return msg.reply(asoc.respuesta);
@@ -900,9 +899,16 @@ client.on("messageCreate", async msg => {
   let r = await IA(contexto, config.modoActual);
   if (config.modoActual === "normal" && r === "NINGUNA") r = null;
 
-  const prohibidas = ["u", "undefined", "null", "ok", ".", "..", "..."];
+  // Filtro antifántasma: elimina respuestas de una sola letra o prohibidas
+  const prohibidas = ["u", "undefined", "null", "ok", ".", "..", "...", "si", "no"];
+  const textoLimpio = String(r || "").trim().toLowerCase();
+  const esRespuestaInvalida = !r
+    || r.length <= 1
+    || prohibidas.includes(textoLimpio)
+    || /^[a-z]$/.test(textoLimpio); // una sola letra
+
   let finalReply;
-  if (!r || r.length <= 1 || prohibidas.includes(r.toLowerCase().trim())) {
+  if (esRespuestaInvalida) {
     finalReply = rand(config.phrases) || rand(extras.phrases) || "💀";
   } else {
     finalReply = r;
