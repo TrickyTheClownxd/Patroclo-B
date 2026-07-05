@@ -899,13 +899,15 @@ client.on("messageCreate", async msg => {
   let r = await IA(contexto, config.modoActual);
   if (config.modoActual === "normal" && r === "NINGUNA") r = null;
 
-  // Filtro antifántasma: elimina respuestas de una sola letra o prohibidas
+  // 🚨 FILTRO ANTI-"U" MEJORADO: detecta cualquier respuesta que contenga solo "u" (o variantes)
   const prohibidas = ["u", "undefined", "null", "ok", ".", "..", "...", "si", "no"];
-  const textoLimpio = String(r || "").trim().toLowerCase();
+  const textoLimpio = String(r || "").trim();
+  const soloLetras = textoLimpio.toLowerCase().replace(/[^a-záéíóúüñ]/g, ""); // solo letras, sin números ni signos
   const esRespuestaInvalida = !r
     || r.length <= 1
-    || prohibidas.includes(textoLimpio)
-    || /^[a-z]$/.test(textoLimpio); // una sola letra
+    || prohibidas.includes(textoLimpio.toLowerCase())
+    || soloLetras === "u"  // captura "u", "U", "u.", " u ", "U!", etc.
+    || soloLetras.length === 0; // por si acaso
 
   let finalReply;
   if (esRespuestaInvalida) {
