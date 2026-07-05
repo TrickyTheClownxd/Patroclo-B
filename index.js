@@ -203,8 +203,15 @@ async function start() {
     { name: "ayuda", description: "📜 Lista de comandos" }
   ];
 
-  await client.application.commands.set(comandosSlash);
-  console.log("✅ Slash commands registrados globalmente.");
+  // Registrar al iniciar correctamente
+  client.once("ready", async () => {
+    try {
+      await client.application.commands.set(comandosSlash);
+      console.log("✅ Slash commands registrados globalmente.");
+    } catch (err) {
+      console.error("❌ Error al registrar slash commands:", err);
+    }
+  });
 
   await client.login(process.env.TOKEN);
   console.log("🔥 PATROCLO HC FINAL ONLINE");
@@ -568,8 +575,8 @@ client.on("messageCreate", async msg => {
     config.modoActual = modo;
     await msg.reply(`🧠 ${t("modo_cambiado", guild)}: **${modo}**`);
   }
-  // ... (copiá exactamente el resto de comandos ! que tenías, pero usando `responder` para embellecer)
-  // Para no hacer eterno el código, te dejo el patrón; la lógica de cada juego es igual que la de slash.
+  // ... (copiá el resto de comandos ! que tenías previamente, usando `responder` o la lógica original)
+  // Podés guiarte por los slash handlers para adaptarlos fácilmente.
 });
 
 process.on("unhandledRejection", (reason, p) => {
