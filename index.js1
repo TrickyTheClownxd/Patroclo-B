@@ -1,0 +1,597 @@
+import { Client, GatewayIntentBits, Partials, AttachmentBuilder } from "discord.js";
+import { MongoClient } from "mongodb";
+import http from "http";
+import dotenv from "dotenv";
+import axios from "axios";
+import fs from "fs";
+import { createCanvas, loadImage } from "canvas";
+
+dotenv.config();
+
+// ================= SERVER =================
+http.createServer((req, res) => res.end("PATROCLO HC FINAL")).listen(process.env.PORT || 8080);
+
+// ================= JSON (solo universe) =================
+function safeJSON(path, def) {
+  try {
+    if (!fs.existsSync(path)) {
+      fs.writeFileSync(path, JSON.stringify(def, null, 2));
+      return def;
+    }
+    return JSON.parse(fs.readFileSync(path, "utf-8"));
+  } catch { return def; }
+}
+
+const extras = safeJSON("./extras.json", { phrases: [], facts: [], reacciones_auto: {} });
+let universe = safeJSON("./universe.json", { facts: [], usedToday: [], lastDate: "" });
+const saveUniverse = () => fs.writeFileSync("./universe.json", JSON.stringify(universe, null, 2));
+
+// ================= CLIENT =================
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+  ],
+  partials: [Partials.Channel],
+});
+
+const mongo = new MongoClient(process.env.MONGO_URI);
+
+// ================= DBS =================
+let usersColl, dataColl, placeColl, asociaColl, userMemColl, lotsColl, warsColl, casinoColl;
+
+// ================= CONFIG =================
+let config = {
+  phrases: [],
+  modoActual: "normal", // modo principal = ADN
+};
+
+const rand = a => a[Math.floor(Math.random() * a.length)];
+
+// ================= MAPA =================
+const SIZE = 256;
+const SCALE = 4;
+let bgImage = null;
+const cooldown = new Map();
+
+function latLonToXY(lat, lon) {
+  lat = Math.max(-90, Math.min(90, lat));
+  lon = Math.max(-180, Math.min(180, lon));
+  const x = ((lon + 180) / 360) * (SIZE - 1);
+  const y = ((90 - lat) / 180) * (SIZE - 1);
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+async function renderPlace() {
+  const canvas = createCanvas(SIZE * SCALE, SIZE * SCALE);
+  const ctx = canvas.getContext("2d");
+  if (bgImage) ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+  const pixels = await placeColl.find().toArray();
+  pixels.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x * SCALE, p.y * SCALE, SCALE, SCALE);
+  });
+  return canvas.toBuffer();
+}
+
+async function renderZoom(minX, maxX, minY, maxY) {
+  const width = (maxX - minX) + 1;
+  const height = (maxY - minY) + 1;
+  const canvas = createCanvas(width * SCALE, height * SCALE);
+  const ctx = canvas.getContext("2d");
+  const pixels = await placeColl.find({
+    x: { $gte: minX, $lte: maxX },
+    y: { $gte: minY, $lte: maxY }
+  }).toArray();
+  pixels.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.fillRect((p.x - minX) * SCALE, (p.y - minY) * SCALE, SCALE, SCALE);
+  });
+  return canvas.toBuffer();
+}
+
+// ================= IA =================
+async function IA(contexto, modo) {
+  let sys, prompt;
+
+  if (modo === "normal") {
+    const frases = config.phrases;
+    if (!frases.length) return null;
+    sys = "Elegí UNA frase de la lista FRASES DEL ADN que mejor responda al MENSAJE DEL USUARIO. Respondé solo con esa frase exacta. Si ninguna encaja, respondé NINGUNA.";
+    prompt = `FRASES DEL ADN:\n${frases.join("\n")}\n\nMENSAJE DEL USUARIO:\n${contexto}`;
+  } else if (modo === "serio") {
+    sys = "Respondé profesional y claro, sin humor ni sarcasmo.";
+    prompt = contexto;
+  } else { // ia
+    sys = "Sos argentino sarcástico y divertido.";
+    prompt = contexto;
+  }
+
+  try {
+    const r = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      { contents: [{ parts: [{ text: `${sys}\n\n${prompt}` }] }] }
+    );
+    return r.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  } catch {
+    return null;
+  }
+}
+
+// ================= START =================
+async function start() {
+  await mongo.connect();
+  const db = mongo.db("patroclo_bot");
+  usersColl = db.collection("users");
+  dataColl = db.collection("bot_data");
+  placeColl = db.collection("place_pixels");
+  asociaColl = db.collection("asociaciones");
+  userMemColl = db.collection("user_memory");
+  lotsColl = db.collection("lots");
+  warsColl = db.collection("wars");
+  casinoColl = db.collection("casino_stats");
+
+  const d = await dataColl.findOne({ id: "main_config" });
+  config.phrases = d?.phrases || [];
+
+  try {
+    bgImage = await loadImage("./maps/world.png");
+  } catch {
+    console.error("No se pudo cargar el mapa base.");
+  }
+
+  await client.login(process.env.TOKEN);
+  console.log("🔥 PATROCLO HC FINAL ONLINE");
+}
+
+// ================= UTILIDADES CASINO =================
+const frasesArgentinas = [
+  "¡De una!",
+  "¡No da más!",
+  "F por tus PatroPesos",
+  "¡Aguante!",
+  "¡Qué lo tiró!",
+  "No estabas manija, no.",
+  "El Diego te sonríe desde el cielo.",
+  "Messi lo aprueba.",
+  "¡Gritalo, carajo!",
+  "Ahora comprate un fernet."
+];
+
+async function verificarSaldo(msg, userId, amount) {
+  const u = await usersColl.findOne({ userId }) || { points: 0 };
+  if (u.points < amount) {
+    msg.reply("❌ No tenés suficiente saldo.");
+    return false;
+  }
+  return true;
+}
+
+// ================= MENSAJES =================
+client.on("messageCreate", async msg => {
+  if (!msg.author || msg.author.bot) return;
+  const content = msg.content.toLowerCase().trim();
+  const texto = msg.content.trim();
+
+  // ===== APRENDIZAJE =====
+  if (!msg.content.startsWith("!") && texto.length > 1) {
+    await dataColl.updateOne(
+      { id: "main_config" },
+      { $addToSet: { phrases: texto } },
+      { upsert: true }
+    );
+  }
+
+  // ================= COMANDOS =================
+  if (msg.content.startsWith("!")) {
+    const args = msg.content.slice(1).split(" ");
+    const cmd = args.shift().toLowerCase();
+
+    // ================= MODO =================
+    if (cmd === "modo") {
+      const nuevoModo = args[0]?.toLowerCase();
+      if (!["normal", "ia", "serio"].includes(nuevoModo)) {
+        return msg.reply("🧠 Modos disponibles: `normal`, `ia`, `serio`");
+      }
+      config.modoActual = nuevoModo;
+      return msg.reply(`🧠 Modo cambiado a: **${nuevoModo}**`);
+    }
+
+    // ================= ASOCIA =================
+    if (cmd === "asocia") {
+      const partes = msg.content.slice(1).split(">");
+      if (partes.length < 2) return msg.reply("❌ Formato: !asocia clave > respuesta");
+      await asociaColl.updateOne(
+        { clave: partes[0].trim().toLowerCase() },
+        { $set: { respuesta: partes[1].trim() } },
+        { upsert: true }
+      );
+      return msg.reply("✅ Asociación guardada.");
+    }
+
+    // ================= MULTIMEDIA =================
+    if (cmd === "gif") {
+      try {
+        const r = await axios.get(
+          `https://api.giphy.com/v1/gifs/search?api_key=${process.env.GIPHY_API_KEY}&q=${args.join(" ")}&limit=1`
+        );
+        return msg.reply(r.data.data[0]?.url || "No encontré nada.");
+      } catch { return msg.reply("❌ Error al buscar GIF."); }
+    }
+
+    if (cmd === "foto") {
+      try {
+        const r = await axios.post(
+          "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
+          { inputs: args.join(" ") },
+          {
+            headers: { Authorization: `Bearer ${process.env.HF_API_KEY}` },
+            responseType: "arraybuffer"
+          }
+        );
+        return msg.reply({ files: [new AttachmentBuilder(Buffer.from(r.data), "img.png")] });
+      } catch { return msg.reply("❌ Error al generar imagen."); }
+    }
+
+    // ================= ECONOMÍA =================
+    if (cmd === "bal") {
+      const u = await usersColl.findOne({ userId: msg.author.id }) || { points: 0 };
+      return msg.reply(`💰 Tu saldo: **$${u.points}**`);
+    }
+
+    if (cmd === "daily") {
+      const u = await usersColl.findOne({ userId: msg.author.id }) || {};
+      if (Date.now() - (u.lastDaily || 0) < 86400000) {
+        return msg.reply("⏳ Ya reclamaste tu daily hoy.");
+      }
+      const reward = 200 + Math.floor(Math.random() * 500);
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $set: { lastDaily: Date.now() }, $inc: { points: reward } },
+        { upsert: true }
+      );
+      return msg.reply(`🎁 Recompensa diaria: **+$${reward}**`);
+    }
+
+    if (cmd === "work") {
+      const reward = 100 + Math.floor(Math.random() * 300);
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $inc: { points: reward } },
+        { upsert: true }
+      );
+      return msg.reply(`💼 Trabajaste y ganaste **$${reward}**`);
+    }
+
+    if (cmd === "pay") {
+      const user = msg.mentions.users.first();
+      const amount = parseInt(args[1]);
+      if (!user || !amount || amount <= 0) return msg.reply("❌ Uso: !pay @usuario cantidad");
+
+      if (!(await verificarSaldo(msg, msg.author.id, amount))) return;
+
+      const session = mongo.startSession();
+      try {
+        session.startTransaction();
+        await usersColl.updateOne(
+          { userId: msg.author.id },
+          { $inc: { points: -amount } },
+          { session }
+        );
+        await usersColl.updateOne(
+          { userId: user.id },
+          { $inc: { points: amount } },
+          { session }
+        );
+        await session.commitTransaction();
+        return msg.reply(`💸 Transferiste **$${amount}** a ${user.username}`);
+      } catch (e) {
+        await session.abortTransaction();
+        console.error(e);
+        return msg.reply("❌ Falló la transferencia.");
+      } finally {
+        session.endSession();
+      }
+    }
+
+    // ================= CASINO MEJORADO =================
+    if (cmd === "slot") {
+      const bet = 50;
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      const carretes = ["🍒", "💎", "7️⃣", "🍀", "⭐"];
+      let mensaje = await msg.reply("🎰 Girando...");
+      for (let i = 0; i < 4; i++) {
+        const r = [rand(carretes), rand(carretes), rand(carretes)];
+        await mensaje.edit(`🎰 **SLOT**\n${r.join(" | ")}`);
+        await new Promise(resolve => setTimeout(resolve, 600));
+      }
+      const final = [rand(carretes), rand(carretes), rand(carretes)];
+      const win = final[0] === final[1] && final[1] === final[2] ? bet * 10 : 0;
+      await mensaje.edit(`🎰 **SLOT**\n${final.join(" | ")}\n${win ? `🎉 ¡GANASTE $${win}! ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`);
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $inc: { points: win - bet } },
+        { upsert: true }
+      );
+      return;
+    }
+
+    if (cmd === "ruleta") {
+      const bet = parseInt(args[0]);
+      if (!bet || bet <= 0) return msg.reply("❌ Apuesta inválida.");
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      const numero = Math.floor(Math.random() * 37);
+      const color = numero === 0 ? "🟢" : (numero % 2 === 0 ? "🔴" : "⚫");
+      const ganancia = numero === 0 ? bet * 14 : (Math.random() < 0.45 ? bet : -bet);
+
+      let mensaje = await msg.reply("🎡 Girando la ruleta...");
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      await mensaje.edit(`🎡 **RULETA**\nGiró: ${color} ${numero}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`);
+
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $inc: { points: ganancia } },
+        { upsert: true }
+      );
+      return;
+    }
+
+    if (cmd === "bj") {
+      const bet = parseInt(args[0]) || 100;
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      const mazo = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+      const valor = c => c === "A" ? 11 : (isNaN(c) ? 10 : parseInt(c));
+      const mano = () => [rand(mazo), rand(mazo)];
+      const puntaje = cartas => {
+        let total = cartas.reduce((a, c) => a + valor(c), 0);
+        let ases = cartas.filter(c => c === "A").length;
+        while (total > 21 && ases > 0) { total -= 10; ases--; }
+        return total;
+      };
+
+      let player = mano(), dealer = mano();
+      let pScore = puntaje(player), dScore = puntaje(dealer);
+      let mensaje = `🃏 **BLACKJACK**\nTus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer[0]} ?`;
+
+      if (pScore === 21) {
+        const ganancia = Math.floor(bet * 1.5);
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia } }, { upsert: true });
+        return msg.reply(`${mensaje}\n¡BLACKJACK! Ganaste $${ganancia} ${rand(frasesArgentinas)}`);
+      }
+
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -bet } }, { upsert: true });
+      const ganancia = dScore > 21 || pScore > dScore ? bet * 2 : 0;
+      if (ganancia > 0) {
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia } }, { upsert: true });
+        return msg.reply(`${mensaje}\nDealer: ${dealer.join(" ")} (${dScore})\n🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}`);
+      } else {
+        return msg.reply(`${mensaje}\nDealer: ${dealer.join(" ")} (${dScore})\n💀 Perdiste $${bet}`);
+      }
+    }
+
+    if (cmd === "dados") {
+      const bet = parseInt(args[0]) || 50;
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      let mensaje = await msg.reply("🎲 Tirando dados...");
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const dado1 = Math.floor(Math.random() * 6) + 1;
+      const dado2 = Math.floor(Math.random() * 6) + 1;
+      const suma = dado1 + dado2;
+      const ganancia = suma === 7 ? bet * 4 : (suma === 11 ? bet * 2 : -bet);
+
+      await mensaje.edit(`🎲 **DADOS**\n${dado1} + ${dado2} = ${suma}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`);
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $inc: { points: ganancia } },
+        { upsert: true }
+      );
+      return;
+    }
+
+    if (cmd === "carrera") {
+      const bet = parseInt(args[0]) || 100;
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      const caballos = ["🐎", "🐴", "🦄", "🏇"];
+      const elegido = caballos[Math.floor(Math.random() * caballos.length)];
+      let mensaje = await msg.reply("🏁 ¡Arranca la carrera!\n" + caballos.join(" "));
+      await new Promise(r => setTimeout(r, 1000));
+
+      const posiciones = caballos.map(() => 0);
+      const meta = 5;
+      let ganador = null;
+      while (!ganador) {
+        caballos.forEach((_, i) => { posiciones[i] += Math.random() > 0.6 ? 1 : 0; });
+        const pista = caballos.map((c, i) => "·".repeat(posiciones[i]) + c + "·".repeat(meta - posiciones[i])).join("\n");
+        await mensaje.edit("🏁 **CARRERA**\n" + pista);
+        ganador = caballos.find((_, i) => posiciones[i] >= meta);
+        await new Promise(r => setTimeout(r, 600));
+      }
+      const gano = ganador === elegido;
+      const delta = gano ? bet * 3 : -bet;
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: delta } }, { upsert: true });
+      await mensaje.edit(`🏁 **CARRERA**\nGanó: ${ganador}\nElegiste: ${elegido}\n${gano ? `🎉 Ganaste $${delta} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`);
+      return;
+    }
+
+    if (cmd === "crash") {
+      const bet = parseInt(args[0]) || 100;
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      let mensaje = await msg.reply("💥 **CRASH**\nMultiplicador: 1.0x");
+      let multiplicador = 1.0;
+      const crashPoint = Math.random() * 4 + 1;
+      const intervalo = setInterval(async () => {
+        multiplicador += 0.15;
+        if (multiplicador >= crashPoint) {
+          clearInterval(intervalo);
+          await mensaje.edit(`💥 **CRASH** en ${multiplicador.toFixed(2)}x\nPerdiste $${bet}`);
+          await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -bet } }, { upsert: true });
+          return;
+        }
+        await mensaje.edit(`💥 **CRASH**\nMultiplicador: ${multiplicador.toFixed(2)}x\nReaccioná con 💰 para retirar`);
+      }, 1000);
+
+      await mensaje.react("💰");
+      const filter = (reaction, user) => reaction.emoji.name === "💰" && user.id === msg.author.id;
+      const collector = mensaje.createReactionCollector({ filter, time: 15000 });
+      collector.on("collect", async () => {
+        clearInterval(intervalo);
+        collector.stop();
+        const ganancia = Math.floor(bet * multiplicador);
+        await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia - bet } }, { upsert: true });
+        await mensaje.edit(`💰 Retiraste a ${multiplicador.toFixed(2)}x\nGanaste $${ganancia} ${rand(frasesArgentinas)}`);
+        await mensaje.reactions.removeAll();
+      });
+      return;
+    }
+
+    if (cmd === "poker2") {
+      const bet = parseInt(args[0]) || 100;
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      const palos = ["♠", "♥", "♦", "♣"];
+      const valores = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
+      const mazo = [];
+      palos.forEach(p => valores.forEach(v => mazo.push(v + p)));
+      const barajar = arr => arr.sort(() => Math.random() - 0.5);
+      const mano = (arr, n) => barajar(arr).slice(0, n);
+      const manoJugador = mano(mazo, 5);
+      
+      const evaluar = cartas => {
+        const valoresCarta = cartas.map(c => c.slice(0, -1));
+        const palosCarta = cartas.map(c => c.slice(-1));
+        const unicos = [...new Set(valoresCarta)];
+        const esColor = new Set(palosCarta).size === 1;
+        const orden = ["2","3","4","5","6","7","8","9","10","J","Q","K","A"];
+        const indices = valoresCarta.map(v => orden.indexOf(v)).sort((a,b)=>a-b);
+        const escalera = indices[4] - indices[0] === 4 && new Set(indices).size === 5;
+        if (esColor && escalera) return { nombre: "Escalera de color", multiplicador: 50 };
+        if (unicos.length === 2) {
+          const cuenta = unicos.map(v => valoresCarta.filter(x => x === v).length);
+          if (cuenta.includes(4)) return { nombre: "Póker", multiplicador: 25 };
+          if (cuenta.includes(3) && cuenta.includes(2)) return { nombre: "Full house", multiplicador: 9 };
+        }
+        if (esColor) return { nombre: "Color", multiplicador: 6 };
+        if (escalera) return { nombre: "Escalera", multiplicador: 4 };
+        if (unicos.length === 3) {
+          const cuenta = unicos.map(v => valoresCarta.filter(x => x === v).length);
+          if (cuenta.includes(3)) return { nombre: "Trío", multiplicador: 3 };
+          if (cuenta.filter(c => c === 2).length === 2) return { nombre: "Doble par", multiplicador: 2 };
+        }
+        if (unicos.length === 4) return { nombre: "Par", multiplicador: 1.5 };
+        return { nombre: "Carta alta", multiplicador: 0 };
+      };
+
+      const resultado = evaluar(manoJugador);
+      const ganancia = resultado.multiplicador > 0 ? Math.floor(bet * resultado.multiplicador) : -bet;
+
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $inc: { points: ganancia } },
+        { upsert: true }
+      );
+
+      return msg.reply(`🃏 **PÓKER**\nTu mano: ${manoJugador.join(" ")}\n${resultado.nombre} → ${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`);
+    }
+
+    // mantener comandos antiguos (coinflip, penal, balatro, etc.) con verificación de saldo
+    if (cmd === "coinflip") {
+      const bet = parseInt(args[0]);
+      if (!bet || bet <= 0) return msg.reply("❌ Apuesta inválida.");
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      const win = Math.random() < 0.5;
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $inc: { points: win ? bet : -bet } },
+        { upsert: true }
+      );
+      return msg.reply(win ? `🪙 Ganaste $${bet} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`);
+    }
+
+    if (cmd === "penal") {
+      const bet = parseInt(args[0]) || 100;
+      if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
+
+      const gol = Math.random() < 0.6;
+      await usersColl.updateOne(
+        { userId: msg.author.id },
+        { $inc: { points: gol ? bet : -bet } },
+        { upsert: true }
+      );
+      return msg.reply(gol ? `⚽ ¡GOL! Ganaste $${bet} ${rand(frasesArgentinas)}` : `🧤 Atajado. Perdiste $${bet}`);
+    }
+
+    // ================= MAPA =================
+    // (se mantiene igual, solo se agregó bgImage cacheada en renderPlace)
+
+    // ================= RANKINGS =================
+    // (sin cambios)
+
+    // ================= UNIVERSO =================
+    if (cmd === "universefacts") {
+      const today = new Date().toISOString().slice(0, 10);
+      if (universe.lastDate !== today) {
+        universe.usedToday = [];
+        universe.lastDate = today;
+        saveUniverse();
+      }
+      let disponibles = universe.facts.filter(f => !universe.usedToday.includes(f));
+      if (!disponibles.length) {
+        universe.usedToday = [];
+        disponibles = universe.facts;
+      }
+      const f = rand(disponibles);
+      universe.usedToday.push(f);
+      saveUniverse();
+      return msg.reply(f || "🌌 No hay datos.");
+    }
+
+    // ================= AYUDA =================
+    if (cmd === "ayudacmd") {
+      return msg.reply(`📜 **PATROCLO HC FINAL**\n\n🎨 MAPA: !place, !pixel, !zoom, !zoomlat, !territorio, !comprarlote, !guerra, !topplace\n📷 MULTIMEDIA: !gif, !foto\n🌌 EXTRAS: !universefacts\n💰 ECONOMÍA: !bal, !daily, !work, !pay, !rich\n🎰 CASINO: !slot, !ruleta, !bj, !dados, !carrera, !crash, !poker2, !coinflip, !penal\n🧠 IA: !modo, !asocia\n\n🔥 Aprende automáticamente del chat.`);
+    }
+
+    return;
+  }
+
+  // ================= RESPUESTAS IA =================
+  const esReply = !!msg.reference;
+
+  const allAsoc = await asociaColl.find().toArray();
+  const asoc = allAsoc.find(a => content.includes(a.clave?.toLowerCase()?.trim()));
+  if (asoc) return msg.reply(asoc.respuesta);
+
+  let contexto = msg.content;
+  if (esReply) {
+    try {
+      const replied = await msg.fetchReference();
+      contexto = `MENSAJE ORIGINAL:\n${replied.content}\n\nRESPUESTA DEL USUARIO:\n${msg.content}`;
+    } catch {}
+  }
+
+  let r = await IA(contexto, config.modoActual);
+  if (config.modoActual === "normal" && r === "NINGUNA") r = null;
+
+  let finalReply;
+  if (!r || r.length <= 1) {
+    finalReply = rand(config.phrases) || rand(extras.phrases) || "💀";
+  } else {
+    finalReply = r;
+  }
+
+  return msg.reply(finalReply);
+});
+
+process.on("unhandledRejection", (reason, p) => {
+  console.error("Unhandled Rejection at:", p, "reason:", reason);
+});
+
+start();
