@@ -1,7 +1,7 @@
 import { Client, GatewayIntentBits, Partials, AttachmentBuilder, EmbedBuilder } from "discord.js";
 import { MongoClient } from "mongodb";
 import http from "http";
-import dotenv from "env";
+import dotenv from "dotenv";
 import axios from "axios";
 import fs from "fs";
 import { createCanvas, loadImage } from "canvas";
