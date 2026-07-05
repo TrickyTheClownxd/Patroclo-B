@@ -12,14 +12,8 @@
     "La Nebulosa de Orión es una región de formación estelar.",
     "Júpiter tiene más de 79 lunas conocidas."
   ],
-  "emojis": ["🔥", "😎", "🧐", "🤌", "💰"],
-  "customEmojis": [],
-  "stickers": [],
   "reacciones_auto": {
     "palabras_clave": ["puto", "facha", "bot", "bardo"],
     "emojis": ["🔥", "😎", "🧐", "🤌"]
-  },
-  "mensajes_especiales": {
-    "bienvenida_vip": "¡Llegó el más facha del server! 😎"
   }
 }
