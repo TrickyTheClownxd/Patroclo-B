@@ -40,15 +40,19 @@ const client = new Client({
 const mongo = new MongoClient(process.env.MONGO_URI);
 
 // ================= DBS =================
-let usersColl, dataColl, placeColl, asociaColl, userMemColl, lotsColl, warsColl, casinoColl, universeFactsColl;
+let usersColl, dataColl, placeColl, asociaColl, userMemColl, lotsColl, warsColl, casinoColl, universeFactsColl, statsColl, tiendaColl;
 
 // ================= CONFIG =================
 let config = {
   phrases: [],
   modoActual: "normal",
+  mantenimiento: false,
+  canalActus: null,
 };
 
 const rand = a => a[Math.floor(Math.random() * a.length)];
+const uptimeInicio = Date.now();
+let comandosEjecutados = 0;
 
 // ================= IDIOMA =================
 function getLang(guild) {
@@ -65,7 +69,7 @@ function t(key, guild) {
 const SIZE = 256;
 const SCALE = 4;
 let bgImage = null;
-const cooldown = new Map(); // para píxeles
+const cooldown = new Map();
 
 function latLonToXY(lat, lon) {
   lat = Math.max(-90, Math.min(90, lat));
@@ -144,9 +148,13 @@ async function start() {
   warsColl = db.collection("wars");
   casinoColl = db.collection("casino_stats");
   universeFactsColl = db.collection("universe_facts");
+  statsColl = db.collection("stats");
+  tiendaColl = db.collection("tienda");
 
   const d = await dataColl.findOne({ id: "main_config" });
   config.phrases = d?.phrases || [];
+  config.mantenimiento = d?.mantenimiento || false;
+  config.canalActus = d?.canalActus || null;
 
   if (!(await universeFactsColl.findOne({ id: "daily_facts" }))) {
     await universeFactsColl.insertOne({
@@ -166,28 +174,22 @@ async function start() {
   // ================= REGISTRAR SLASH COMMANDS =================
   const comandosSlash = [
     { name: "bal", description: "💰 Ver tu saldo de PatroPesos" },
-    {
-      name: "modo", description: "🧠 Cambiar el modo del bot",
-      options: [{ name: "modo", description: "normal / ia / serio", type: 3, required: true }]
-    },
-    {
-      name: "asocia", description: "🔗 Asociar palabra > respuesta",
+    { name: "modo", description: "🧠 Cambiar el modo del bot",
+      options: [{ name: "modo", description: "normal / ia / serio", type: 3, required: true }] },
+    { name: "asocia", description: "🔗 Asociar palabra > respuesta",
       options: [
         { name: "clave", description: "Palabra clave", type: 3, required: true },
         { name: "respuesta", description: "Respuesta", type: 3, required: true }
-      ]
-    },
+      ] },
     { name: "gif", description: "🎞️ Buscar un GIF", options: [{ name: "busqueda", description: "Término", type: 3, required: true }] },
     { name: "foto", description: "🖼️ Generar imagen con IA", options: [{ name: "descripcion", description: "Descripción", type: 3, required: true }] },
     { name: "daily", description: "🎁 Reclamar recompensa diaria" },
     { name: "work", description: "💼 Trabajar por PatroPesos" },
-    {
-      name: "pay", description: "💸 Transferir dinero",
+    { name: "pay", description: "💸 Transferir dinero",
       options: [
         { name: "usuario", description: "Usuario", type: 6, required: true },
         { name: "cantidad", description: "Cantidad", type: 4, required: true }
-      ]
-    },
+      ] },
     { name: "slot", description: "🎰 Jugar al slot" },
     { name: "ruleta", description: "🎡 Jugar a la ruleta", options: [{ name: "apuesta", description: "Apuesta", type: 4, required: true }] },
     { name: "bj", description: "🃏 Jugar al blackjack", options: [{ name: "apuesta", description: "Apuesta", type: 4 }] },
@@ -200,7 +202,13 @@ async function start() {
     { name: "place", description: "🗺️ Ver el mapa mundial" },
     { name: "universefacts", description: "🌌 Dato curioso del universo" },
     { name: "rich", description: "💰 Ranking de los más ricos" },
-    { name: "ayuda", description: "📜 Lista de comandos" }
+    { name: "ayuda", description: "📜 Lista de comandos" },
+    { name: "comprar", description: "🛒 Comprar ítems en la tienda",
+      options: [{ name: "item", description: "escudo / multiplicador", type: 3, required: true }] },
+    { name: "stats", description: "📊 Estadísticas del bot" },
+    { name: "actus", description: "📢 Mostrar últimas actualizaciones" },
+    { name: "mantenimiento", description: "🔧 Activar/desactivar modo mantenimiento (admin)",
+      options: [{ name: "activar", description: "true/false", type: 5, required: true }] }
   ];
 
   client.once("ready", async () => {
@@ -248,17 +256,31 @@ async function obtenerFactDiario() {
   return null;
 }
 
-function crearEmbed(color, title, description, thumbnail) {
-  const embed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description);
+// ================= EMBED MEJORADO =================
+function crearEmbed(color, title, description, options = {}) {
+  const { authorUser, thumbnail } = options;
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(title)
+    .setDescription(description)
+    .setFooter({ text: "Patroclo HC FINAL", iconURL: client.user?.displayAvatarURL() })
+    .setTimestamp();
+
+  if (authorUser) embed.setAuthor({ name: authorUser.username, iconURL: authorUser.displayAvatarURL() });
   if (thumbnail) embed.setThumbnail(thumbnail);
   return embed;
 }
 
-// ================= SISTEMA DE COOLDOWN POR USUARIO =================
-const userMessageCounts = new Map(); // userId -> número de mensajes desde la última respuesta
+// ================= COOLDOWN DE USUARIO (8 MENSAJES) =================
+const userMessageCounts = new Map();
 
-function shouldRespondToUser(userId, messageContent, botId) {
-  if (messageContent.includes(`@${botId}`) || messageContent.toLowerCase().includes("patroclo")) {
+function shouldRespondToUser(msg) {
+  const userId = msg.author.id;
+  const content = msg.content;
+
+  if (msg.reference) return true;
+
+  if (content.includes(`@${client.user.id}`) || content.toLowerCase().includes("patroclo")) {
     userMessageCounts.delete(userId);
     return true;
   }
@@ -267,39 +289,25 @@ function shouldRespondToUser(userId, messageContent, botId) {
   count++;
   userMessageCounts.set(userId, count);
 
-  if (count >= 3) {
+  if (count >= 8) {
     userMessageCounts.set(userId, 0);
     return true;
   }
   return false;
 }
 
-// ================= AUTO-SPEAK POR INACTIVIDAD =================
-const guildActivity = new Map();
-
-function actualizarActividad(guildId, channelId) {
-  guildActivity.set(guildId, {
-    lastActivity: Date.now(),
-    lastChannelId: channelId
-  });
-}
-
-setInterval(async () => {
-  for (const [guildId, data] of guildActivity.entries()) {
-    if (Date.now() - data.lastActivity >= 300000) {
-      const channel = client.channels.cache.get(data.lastChannelId);
-      if (channel && channel.isTextBased()) {
-        try {
-          const frase = rand(config.phrases) || rand(extras.phrases) || "💀";
-          await channel.send({ embeds: [crearEmbed(0x808080, "🧠 Patroclo", frase)] });
-          actualizarActividad(guildId, data.lastChannelId);
-        } catch (e) {
-          console.error("Error al enviar mensaje automático:", e);
-        }
-      }
-    }
-  }
-}, 300000);
+// ================= NOVEDADES PARA !actus =================
+const novedades = [
+  "🎨 Nuevo diseño de embeds con autor y footer.",
+  "🛡️ Tienda con escudo y multiplicador.",
+  "🔧 Comando !mantenimiento para pausar el bot.",
+  "📊 Comando !stats con estadísticas.",
+  "🌌 Universefacts ahora usa API de noticias espaciales.",
+  "🎰 Casino mejorado con nuevos juegos.",
+  "🌐 Soporte multi‑idioma básico (es, en, pt).",
+  "⚡ Cooldown de 8 mensajes para evitar spam.",
+  "💬 Respuesta automática a mensajes reply."
+];
 
 // ================= INTERACTION HANDLER (SLASH) =================
 client.on("interactionCreate", async interaction => {
@@ -309,10 +317,8 @@ client.on("interactionCreate", async interaction => {
   const guild = interaction.guild;
   const userId = interaction.user.id;
 
-  if (guild) actualizarActividad(guild.id, interaction.channelId);
-
   async function replyEmbed(color, title, descripcion, thumbnail) {
-    const embed = crearEmbed(color, title, descripcion, thumbnail || interaction.user.displayAvatarURL());
+    const embed = crearEmbed(color, title, descripcion, { authorUser: interaction.user, thumbnail: thumbnail || interaction.user.displayAvatarURL() });
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply({ embeds: [embed] });
     } else {
@@ -320,8 +326,58 @@ client.on("interactionCreate", async interaction => {
     }
   }
 
+  if (config.mantenimiento && commandName !== "mantenimiento") {
+    return interaction.reply({ content: "🔧 El bot está en mantenimiento. Vuelve más tarde.", ephemeral: true });
+  }
+
+  comandosEjecutados++;
+
   try {
-    if (commandName === "bal") {
+    // ================= MANTENIMIENTO =================
+    if (commandName === "mantenimiento") {
+      const activar = options.getBoolean("activar");
+      config.mantenimiento = activar;
+      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: activar } }, { upsert: true });
+      return interaction.reply(`🔧 Modo mantenimiento **${activar ? "activado" : "desactivado"}**.`);
+    }
+    // ================= STATS =================
+    else if (commandName === "stats") {
+      const uptime = Date.now() - uptimeInicio;
+      const horas = Math.floor(uptime / 3600000);
+      const minutos = Math.floor((uptime % 3600000) / 60000);
+      const frasesAprendidas = config.phrases.length;
+      const desc = `⏱️ Uptime: ${horas}h ${minutos}m\n📚 Frases aprendidas: ${frasesAprendidas}\n🔢 Comandos ejecutados: ${comandosEjecutados}`;
+      await replyEmbed(0x3498DB, "📊 Estadísticas", desc);
+    }
+    // ================= ACTUS =================
+    else if (commandName === "actus") {
+      const canalId = config.canalActus;
+      if (!canalId) return interaction.reply("❌ No hay canal de actualizaciones configurado.");
+      const canal = client.channels.cache.get(canalId);
+      if (!canal) return interaction.reply("❌ No se encontró el canal.");
+      const texto = novedades.join("\n");
+      await canal.send({ embeds: [crearEmbed(0x9B59B6, "📢 Novedades de Patroclo", texto)] });
+      await interaction.reply("✅ Novedades enviadas al canal correspondiente.");
+    }
+    // ================= TIENDA =================
+    else if (commandName === "comprar") {
+      const item = options.getString("item").toLowerCase();
+      if (!["escudo", "multiplicador"].includes(item)) return interaction.reply("❌ Ítem no válido. Usá `escudo` o `multiplicador`.");
+      const precios = { escudo: 500, multiplicador: 300 };
+      const precio = precios[item];
+      if (!(await verificarSaldo(interaction, userId, precio))) return;
+      await usersColl.updateOne({ userId }, { $inc: { points: -precio } }, { upsert: true });
+      const duracion = item === "escudo" ? 3600000 : 1800000;
+      const expira = Date.now() + duracion;
+      await tiendaColl.updateOne(
+        { userId, tipo: item },
+        { $set: { userId, tipo: item, expira } },
+        { upsert: true }
+      );
+      await replyEmbed(0xFFD700, "🛒 Tienda", `¡Compraste **${item}** por **$${precio}**!\nExpira <t:${Math.floor(expira/1000)}:R>.`);
+    }
+    // ================= ECONOMÍA =================
+    else if (commandName === "bal") {
       const u = await usersColl.findOne({ userId }) || { points: 0 };
       await replyEmbed(0x00FF00, "💰 PatroPesos", `${t("saldo", guild)}: **$${u.points}**`);
     }
@@ -396,7 +452,7 @@ client.on("interactionCreate", async interaction => {
       const final = [rand(carretes), rand(carretes), rand(carretes)];
       const win = final[0] === final[1] && final[1] === final[2] ? bet * 10 : 0;
       await usersColl.updateOne({ userId }, { $inc: { points: win - bet } }, { upsert: true });
-      await interaction.editReply({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🎰 Slot", `${final.join(" | ")}\n${win ? `🎉 ¡GANASTE $${win}! ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await interaction.editReply({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🎰 Slot", `${final.join(" | ")}\n${win ? `🎉 ¡GANASTE $${win}! ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: interaction.user })] });
     }
     else if (commandName === "ruleta") {
       const bet = options.getInteger("apuesta");
@@ -407,7 +463,7 @@ client.on("interactionCreate", async interaction => {
       const color = numero === 0 ? "🟢" : (numero % 2 === 0 ? "🔴" : "⚫");
       const ganancia = numero === 0 ? bet * 14 : (Math.random() < 0.45 ? bet : -bet);
       await new Promise(res => setTimeout(res, 1200));
-      await interaction.editReply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎡 Ruleta", `${t("ruleta_numero", guild)}: ${color} ${numero}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await interaction.editReply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎡 Ruleta", `${t("ruleta_numero", guild)}: ${color} ${numero}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: interaction.user })] });
       await usersColl.updateOne({ userId }, { $inc: { points: ganancia } }, { upsert: true });
     }
     else if (commandName === "bj") {
@@ -422,11 +478,11 @@ client.on("interactionCreate", async interaction => {
       if (pScore === 21) {
         const ganancia = Math.floor(bet * 1.5);
         await usersColl.updateOne({ userId }, { $inc: { points: ganancia } }, { upsert: true });
-        return interaction.reply({ embeds: [crearEmbed(0xFFD700, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer[0]} ?\n¡BLACKJACK! Ganaste $${ganancia} ${rand(frasesArgentinas)}`)] });
+        return interaction.reply({ embeds: [crearEmbed(0xFFD700, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer[0]} ?\n¡BLACKJACK! Ganaste $${ganancia} ${rand(frasesArgentinas)}`, { authorUser: interaction.user })] });
       }
       await usersColl.updateOne({ userId }, { $inc: { points: -bet } }, { upsert: true });
       const ganancia = dScore > 21 || pScore > dScore ? bet * 2 : 0;
-      await interaction.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer.join(" ")} (${dScore})\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await interaction.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer.join(" ")} (${dScore})\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: interaction.user })] });
       if (ganancia > 0) await usersColl.updateOne({ userId }, { $inc: { points: ganancia } }, { upsert: true });
     }
     else if (commandName === "dados") {
@@ -438,7 +494,7 @@ client.on("interactionCreate", async interaction => {
       const suma = dado1 + dado2;
       const ganancia = suma === 7 ? bet * 4 : (suma === 11 ? bet * 2 : -bet);
       await new Promise(res => setTimeout(res, 800));
-      await interaction.editReply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎲 Dados", `${dado1} + ${dado2} = ${suma}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await interaction.editReply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎲 Dados", `${dado1} + ${dado2} = ${suma}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: interaction.user })] });
       await usersColl.updateOne({ userId }, { $inc: { points: ganancia } }, { upsert: true });
     }
     else if (commandName === "carrera") {
@@ -460,7 +516,7 @@ client.on("interactionCreate", async interaction => {
       const gano = ganador === elegido;
       const delta = gano ? bet * 3 : -bet;
       await usersColl.updateOne({ userId }, { $inc: { points: delta } }, { upsert: true });
-      await interaction.editReply({ embeds: [crearEmbed(gano ? 0xFFD700 : 0xFF0000, "🏁 Carrera", `Ganó: ${ganador}\nElegiste: ${elegido}\n${gano ? `🎉 Ganaste $${delta} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await interaction.editReply({ embeds: [crearEmbed(gano ? 0xFFD700 : 0xFF0000, "🏁 Carrera", `Ganó: ${ganador}\nElegiste: ${elegido}\n${gano ? `🎉 Ganaste $${delta} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: interaction.user })] });
     }
     else if (commandName === "crash") {
       const bet = options.getInteger("apuesta") || 100;
@@ -472,7 +528,7 @@ client.on("interactionCreate", async interaction => {
         multiplicador += 0.15;
         if (multiplicador >= crashPoint) {
           clearInterval(intervalo);
-          await interaction.editReply({ embeds: [crearEmbed(0xFF0000, "💥 Crash", `Multiplicador: ${multiplicador.toFixed(2)}x\n💀 Perdiste $${bet}`)] });
+          await interaction.editReply({ embeds: [crearEmbed(0xFF0000, "💥 Crash", `Multiplicador: ${multiplicador.toFixed(2)}x\n💀 Perdiste $${bet}`, { authorUser: interaction.user })] });
           await usersColl.updateOne({ userId }, { $inc: { points: -bet } }, { upsert: true });
           return;
         }
@@ -487,7 +543,7 @@ client.on("interactionCreate", async interaction => {
         collector.stop();
         const ganancia = Math.floor(bet * multiplicador);
         await usersColl.updateOne({ userId }, { $inc: { points: ganancia - bet } }, { upsert: true });
-        await interaction.editReply({ embeds: [crearEmbed(0xFFD700, "💰 Crash", `Retiraste a ${multiplicador.toFixed(2)}x\nGanaste $${ganancia} ${rand(frasesArgentinas)}`)] });
+        await interaction.editReply({ embeds: [crearEmbed(0xFFD700, "💰 Crash", `Retiraste a ${multiplicador.toFixed(2)}x\nGanaste $${ganancia} ${rand(frasesArgentinas)}`, { authorUser: interaction.user })] });
         await reply.reactions.removeAll();
       });
     }
@@ -527,7 +583,7 @@ client.on("interactionCreate", async interaction => {
       const resultado = evaluar(manoJugador);
       const ganancia = resultado.multi > 0 ? Math.floor(bet * resultado.multi) : -bet;
       await usersColl.updateOne({ userId }, { $inc: { points: ganancia } }, { upsert: true });
-      await interaction.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Póker", `Tu mano: ${manoJugador.join(" ")}\n${resultado.nombre} → ${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await interaction.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Póker", `Tu mano: ${manoJugador.join(" ")}\n${resultado.nombre} → ${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: interaction.user })] });
     }
     else if (commandName === "coinflip") {
       const bet = options.getInteger("apuesta");
@@ -535,14 +591,14 @@ client.on("interactionCreate", async interaction => {
       if (!(await verificarSaldo(interaction, userId, bet))) return;
       const win = Math.random() < 0.5;
       await usersColl.updateOne({ userId }, { $inc: { points: win ? bet : -bet } }, { upsert: true });
-      await interaction.reply({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🪙 Coinflip", win ? `🎉 Ganaste $${bet} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`)] });
+      await interaction.reply({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🪙 Coinflip", win ? `🎉 Ganaste $${bet} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`, { authorUser: interaction.user })] });
     }
     else if (commandName === "penal") {
       const bet = options.getInteger("apuesta") || 100;
       if (!(await verificarSaldo(interaction, userId, bet))) return;
       const gol = Math.random() < 0.6;
       await usersColl.updateOne({ userId }, { $inc: { points: gol ? bet : -bet } }, { upsert: true });
-      await interaction.reply({ embeds: [crearEmbed(gol ? 0xFFD700 : 0xFF0000, "⚽ Penal", gol ? `¡GOL! Ganaste $${bet} ${rand(frasesArgentinas)}` : `🧤 Atajado. Perdiste $${bet}`)] });
+      await interaction.reply({ embeds: [crearEmbed(gol ? 0xFFD700 : 0xFF0000, "⚽ Penal", gol ? `¡GOL! Ganaste $${bet} ${rand(frasesArgentinas)}` : `🧤 Atajado. Perdiste $${bet}`, { authorUser: interaction.user })] });
     }
     // ================= MAPA =================
     else if (commandName === "place") {
@@ -583,7 +639,7 @@ client.on("interactionCreate", async interaction => {
     }
     // ================= AYUDA =================
     else if (commandName === "ayuda") {
-      const texto = `🎨 MAPA: /place, /pixel, /zoom, /zoomlat, /territorio, /comprarlote, /guerra, /topplace\n📷 MULTIMEDIA: /gif, /foto\n🌌 EXTRAS: /universefacts\n💰 ECONOMÍA: /bal, /daily, /work, /pay, /rich\n🎰 CASINO: /slot, /ruleta, /bj, /dados, /carrera, /crash, /poker, /coinflip, /penal\n🧠 IA: /modo, /asocia\n\n🔥 Aprende automáticamente del chat.`;
+      const texto = `🎨 MAPA: /place, /pixel, /zoom, /zoomlat, /territorio, /comprarlote, /guerra, /topplace\n📷 MULTIMEDIA: /gif, /foto\n🌌 EXTRAS: /universefacts\n💰 ECONOMÍA: /bal, /daily, /work, /pay, /rich\n🎰 CASINO: /slot, /ruleta, /bj, /dados, /carrera, /crash, /poker, /coinflip, /penal\n🧠 IA: /modo, /asocia\n🛒 TIENDA: /comprar\n📊 STATS: /stats\n📢 ACTUS: /actus\n🔧 MANTENIMIENTO: /mantenimiento\n\n🔥 Aprende automáticamente del chat.`;
       await replyEmbed(0x9B59B6, "📜 Ayuda", texto);
     }
   } catch (err) {
@@ -599,7 +655,7 @@ client.on("messageCreate", async msg => {
   const texto = msg.content.trim();
   const guild = msg.guild;
 
-  if (guild) actualizarActividad(guild.id, msg.channel.id);
+  if (config.mantenimiento && !msg.content.startsWith("!mantenimiento")) return;
 
   // Aprendizaje
   if (!msg.content.startsWith("!") && texto.length > 1) {
@@ -620,10 +676,57 @@ client.on("messageCreate", async msg => {
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
 
-    const responder = (color, title, desc) => msg.reply({ embeds: [crearEmbed(color, title, desc, msg.author.displayAvatarURL())] });
+    comandosEjecutados++;
 
+    const responder = (color, title, desc) => msg.reply({ embeds: [crearEmbed(color, title, desc, { authorUser: msg.author })] });
+
+    // ================= MANTENIMIENTO =================
+    if (cmd === "mantenimiento") {
+      if (!msg.member.permissions.has("Administrator")) return msg.reply("❌ No tenés permisos.");
+      const activar = args[0] === "on" || args[0] === "true" || args[0] === "1";
+      config.mantenimiento = activar;
+      await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: activar } }, { upsert: true });
+      return msg.reply(`🔧 Modo mantenimiento **${activar ? "activado" : "desactivado"}**.`);
+    }
+    // ================= STATS =================
+    else if (cmd === "stats") {
+      const uptime = Date.now() - uptimeInicio;
+      const horas = Math.floor(uptime / 3600000);
+      const minutos = Math.floor((uptime % 3600000) / 60000);
+      const frasesAprendidas = config.phrases.length;
+      const desc = `⏱️ Uptime: ${horas}h ${minutos}m\n📚 Frases aprendidas: ${frasesAprendidas}\n🔢 Comandos ejecutados: ${comandosEjecutados}`;
+      await responder(0x3498DB, "📊 Estadísticas", desc);
+      return;
+    }
+    // ================= ACTUS =================
+    else if (cmd === "actus") {
+      const canalId = config.canalActus;
+      if (!canalId) return msg.reply("❌ No hay canal de actualizaciones configurado.");
+      const canal = client.channels.cache.get(canalId);
+      if (!canal) return msg.reply("❌ No se encontró el canal.");
+      const texto = novedades.join("\n");
+      await canal.send({ embeds: [crearEmbed(0x9B59B6, "📢 Novedades de Patroclo", texto)] });
+      return msg.reply("✅ Novedades enviadas al canal correspondiente.");
+    }
+    // ================= TIENDA =================
+    else if (cmd === "comprar") {
+      const item = args[0]?.toLowerCase();
+      if (!["escudo", "multiplicador"].includes(item)) return msg.reply("❌ Ítem no válido. Usá `escudo` o `multiplicador`.");
+      const precios = { escudo: 500, multiplicador: 300 };
+      const precio = precios[item];
+      if (!(await verificarSaldo(msg, msg.author.id, precio))) return;
+      await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -precio } }, { upsert: true });
+      const duracion = item === "escudo" ? 3600000 : 1800000;
+      const expira = Date.now() + duracion;
+      await tiendaColl.updateOne(
+        { userId: msg.author.id, tipo: item },
+        { $set: { userId: msg.author.id, tipo: item, expira } },
+        { upsert: true }
+      );
+      return msg.reply({ embeds: [crearEmbed(0xFFD700, "🛒 Tienda", `¡Compraste **${item}** por **$${precio}**!\nExpira <t:${Math.floor(expira/1000)}:R>.`, { authorUser: msg.author })] });
+    }
     // ================= ECONOMÍA =================
-    if (cmd === "bal") {
+    else if (cmd === "bal") {
       const u = await usersColl.findOne({ userId: msg.author.id }) || { points: 0 };
       await responder(0x00FF00, "💰 PatroPesos", `${t("saldo", guild)}: **$${u.points}**`);
     }
@@ -699,7 +802,7 @@ client.on("messageCreate", async msg => {
       const final = [rand(carretes), rand(carretes), rand(carretes)];
       const win = final[0] === final[1] && final[1] === final[2] ? bet * 10 : 0;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: win - bet } }, { upsert: true });
-      await mensaje.edit({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🎰 Slot", `${final.join(" | ")}\n${win ? `🎉 ¡GANASTE $${win}! ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await mensaje.edit({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🎰 Slot", `${final.join(" | ")}\n${win ? `🎉 ¡GANASTE $${win}! ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: msg.author })] });
     }
     else if (cmd === "ruleta") {
       const bet = parseInt(args[0]);
@@ -710,7 +813,7 @@ client.on("messageCreate", async msg => {
       const ganancia = numero === 0 ? bet * 14 : (Math.random() < 0.45 ? bet : -bet);
       let mensaje = await msg.reply(t("ruleta_girando", guild));
       await new Promise(resolve => setTimeout(resolve, 1200));
-      await mensaje.edit({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎡 Ruleta", `${t("ruleta_numero", guild)}: ${color} ${numero}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await mensaje.edit({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎡 Ruleta", `${t("ruleta_numero", guild)}: ${color} ${numero}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: msg.author })] });
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia } }, { upsert: true });
     }
     else if (cmd === "bj") {
@@ -725,11 +828,11 @@ client.on("messageCreate", async msg => {
       if (pScore === 21) {
         const ganancia = Math.floor(bet * 1.5);
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia } }, { upsert: true });
-        return msg.reply({ embeds: [crearEmbed(0xFFD700, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer[0]} ?\n¡BLACKJACK! Ganaste $${ganancia} ${rand(frasesArgentinas)}`)] });
+        return msg.reply({ embeds: [crearEmbed(0xFFD700, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer[0]} ?\n¡BLACKJACK! Ganaste $${ganancia} ${rand(frasesArgentinas)}`, { authorUser: msg.author })] });
       }
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -bet } }, { upsert: true });
       const ganancia = dScore > 21 || pScore > dScore ? bet * 2 : 0;
-      await msg.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer.join(" ")} (${dScore})\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await msg.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Blackjack", `Tus cartas: ${player.join(" ")} (${pScore})\nDealer: ${dealer.join(" ")} (${dScore})\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: msg.author })] });
       if (ganancia > 0) await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia } }, { upsert: true });
     }
     else if (cmd === "dados") {
@@ -741,7 +844,7 @@ client.on("messageCreate", async msg => {
       const dado2 = Math.floor(Math.random() * 6) + 1;
       const suma = dado1 + dado2;
       const ganancia = suma === 7 ? bet * 4 : (suma === 11 ? bet * 2 : -bet);
-      await mensaje.edit({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎲 Dados", `${dado1} + ${dado2} = ${suma}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await mensaje.edit({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🎲 Dados", `${dado1} + ${dado2} = ${suma}\n${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: msg.author })] });
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia } }, { upsert: true });
     }
     else if (cmd === "carrera") {
@@ -764,7 +867,7 @@ client.on("messageCreate", async msg => {
       const gano = ganador === elegido;
       const delta = gano ? bet * 3 : -bet;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: delta } }, { upsert: true });
-      await mensaje.edit({ embeds: [crearEmbed(gano ? 0xFFD700 : 0xFF0000, "🏁 Carrera", `Ganó: ${ganador}\nElegiste: ${elegido}\n${gano ? `🎉 Ganaste $${delta} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await mensaje.edit({ embeds: [crearEmbed(gano ? 0xFFD700 : 0xFF0000, "🏁 Carrera", `Ganó: ${ganador}\nElegiste: ${elegido}\n${gano ? `🎉 Ganaste $${delta} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: msg.author })] });
     }
     else if (cmd === "crash") {
       const bet = parseInt(args[0]) || 100;
@@ -776,7 +879,7 @@ client.on("messageCreate", async msg => {
         multiplicador += 0.15;
         if (multiplicador >= crashPoint) {
           clearInterval(intervalo);
-          await mensaje.edit({ embeds: [crearEmbed(0xFF0000, "💥 Crash", `Multiplicador: ${multiplicador.toFixed(2)}x\n💀 Perdiste $${bet}`)] });
+          await mensaje.edit({ embeds: [crearEmbed(0xFF0000, "💥 Crash", `Multiplicador: ${multiplicador.toFixed(2)}x\n💀 Perdiste $${bet}`, { authorUser: msg.author })] });
           await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: -bet } }, { upsert: true });
           return;
         }
@@ -790,7 +893,7 @@ client.on("messageCreate", async msg => {
         collector.stop();
         const ganancia = Math.floor(bet * multiplicador);
         await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia - bet } }, { upsert: true });
-        await mensaje.edit({ embeds: [crearEmbed(0xFFD700, "💰 Crash", `Retiraste a ${multiplicador.toFixed(2)}x\nGanaste $${ganancia} ${rand(frasesArgentinas)}`)] });
+        await mensaje.edit({ embeds: [crearEmbed(0xFFD700, "💰 Crash", `Retiraste a ${multiplicador.toFixed(2)}x\nGanaste $${ganancia} ${rand(frasesArgentinas)}`, { authorUser: msg.author })] });
         await mensaje.reactions.removeAll();
       });
     }
@@ -830,7 +933,7 @@ client.on("messageCreate", async msg => {
       const resultado = evaluar(manoJugador);
       const ganancia = resultado.multi > 0 ? Math.floor(bet * resultado.multi) : -bet;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: ganancia } }, { upsert: true });
-      await msg.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Póker", `Tu mano: ${manoJugador.join(" ")}\n${resultado.nombre} → ${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`)] });
+      await msg.reply({ embeds: [crearEmbed(ganancia > 0 ? 0xFFD700 : 0xFF0000, "🃏 Póker", `Tu mano: ${manoJugador.join(" ")}\n${resultado.nombre} → ${ganancia > 0 ? `🎉 Ganaste $${ganancia} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`}`, { authorUser: msg.author })] });
     }
     else if (cmd === "coinflip") {
       const bet = parseInt(args[0]);
@@ -838,14 +941,14 @@ client.on("messageCreate", async msg => {
       if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
       const win = Math.random() < 0.5;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: win ? bet : -bet } }, { upsert: true });
-      await msg.reply({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🪙 Coinflip", win ? `🎉 Ganaste $${bet} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`)] });
+      await msg.reply({ embeds: [crearEmbed(win ? 0xFFD700 : 0xFF0000, "🪙 Coinflip", win ? `🎉 Ganaste $${bet} ${rand(frasesArgentinas)}` : `💀 Perdiste $${bet}`, { authorUser: msg.author })] });
     }
     else if (cmd === "penal") {
       const bet = parseInt(args[0]) || 100;
       if (!(await verificarSaldo(msg, msg.author.id, bet))) return;
       const gol = Math.random() < 0.6;
       await usersColl.updateOne({ userId: msg.author.id }, { $inc: { points: gol ? bet : -bet } }, { upsert: true });
-      await msg.reply({ embeds: [crearEmbed(gol ? 0xFFD700 : 0xFF0000, "⚽ Penal", gol ? `¡GOL! Ganaste $${bet} ${rand(frasesArgentinas)}` : `🧤 Atajado. Perdiste $${bet}`)] });
+      await msg.reply({ embeds: [crearEmbed(gol ? 0xFFD700 : 0xFF0000, "⚽ Penal", gol ? `¡GOL! Ganaste $${bet} ${rand(frasesArgentinas)}` : `🧤 Atajado. Perdiste $${bet}`, { authorUser: msg.author })] });
     }
     // ================= MAPA =================
     else if (cmd === "place") {
@@ -924,19 +1027,19 @@ client.on("messageCreate", async msg => {
     }
     // ================= AYUDA =================
     else if (cmd === "ayudacmd" || cmd === "ayuda") {
-      const texto = `🎨 MAPA: !place, !pixel, !zoom, !zoomlat, !territorio, !comprarlote, !guerra, !topplace\n📷 MULTIMEDIA: !gif, !foto\n🌌 EXTRAS: !universefacts\n💰 ECONOMÍA: !bal, !daily, !work, !pay, !rich\n🎰 CASINO: !slot, !ruleta, !bj, !dados, !carrera, !crash, !poker, !coinflip, !penal\n🧠 IA: !modo, !asocia\n\n🔥 Aprende automáticamente del chat.`;
+      const texto = `🎨 MAPA: !place, !pixel, !zoom, !zoomlat, !territorio, !comprarlote, !guerra, !topplace\n📷 MULTIMEDIA: !gif, !foto\n🌌 EXTRAS: !universefacts\n💰 ECONOMÍA: !bal, !daily, !work, !pay, !rich\n🎰 CASINO: !slot, !ruleta, !bj, !dados, !carrera, !crash, !poker, !coinflip, !penal\n🧠 IA: !modo, !asocia\n🛒 TIENDA: !comprar\n📊 STATS: !stats\n📢 ACTUS: !actus\n🔧 MANTENIMIENTO: !mantenimiento\n\n🔥 Aprende automáticamente del chat.`;
       return msg.reply({ embeds: [crearEmbed(0x9B59B6, "📜 Ayuda", texto)] });
     }
 
-    return; // IMPORTANTE: salir si es comando
+    return; // Salir después de un comando
   }
 
-  // ================= RESPUESTAS IA (con cooldown) =================
-  if (!shouldRespondToUser(msg.author.id, msg.content, client.user.id)) return;
+  // ================= RESPUESTAS IA (con cooldown y reply) =================
+  if (!shouldRespondToUser(msg)) return;
 
   const esReply = !!msg.reference;
 
-    // Asociaciones (con filtro anti-"u")
+  // Asociaciones
   const allAsoc = await asociaColl.find().toArray();
   const asoc = allAsoc.find(a => content.includes(a.clave?.toLowerCase()?.trim()));
   if (asoc) {
@@ -945,12 +1048,16 @@ client.on("messageCreate", async msg => {
     const soloLetrasAsoc = respAsoc.toLowerCase().replace(/[^a-záéíóúüñ]/g, "");
     if (prohibidas.includes(respAsoc.toLowerCase().trim()) || soloLetrasAsoc === "u" || soloLetrasAsoc.length === 0) {
       const frase = rand(config.phrases) || rand(extras.phrases) || "💀";
-      return msg.reply(frase); // texto normal
+      return msg.reply(frase);
     }
-    return msg.reply(respAsoc); // texto normal
+    if (config.modoActual === "normal") {
+      return msg.reply(respAsoc);
+    } else {
+      return msg.reply({ embeds: [crearEmbed(0x808080, "🧠 Patroclo", respAsoc)] });
+    }
   }
 
-  // Respuesta IA
+  // IA
   let contexto = msg.content;
   if (esReply) {
     try {
@@ -974,7 +1081,11 @@ client.on("messageCreate", async msg => {
     finalReply = r;
   }
 
-  return msg.reply({ embeds: [crearEmbed(0x808080, "🧠 Patroclo", finalReply)] });
+  if (config.modoActual === "normal") {
+    return msg.reply(finalReply);
+  } else {
+    return msg.reply({ embeds: [crearEmbed(0x808080, "🧠 Patroclo", finalReply, { authorUser: msg.author })] });
+  }
 });
 
 process.on("unhandledRejection", (reason, p) => {
