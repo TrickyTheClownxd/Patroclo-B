@@ -936,7 +936,7 @@ client.on("messageCreate", async msg => {
 
   const esReply = !!msg.reference;
 
-  // Asociaciones (con filtro anti-"u")
+    // Asociaciones (con filtro anti-"u")
   const allAsoc = await asociaColl.find().toArray();
   const asoc = allAsoc.find(a => content.includes(a.clave?.toLowerCase()?.trim()));
   if (asoc) {
@@ -945,9 +945,9 @@ client.on("messageCreate", async msg => {
     const soloLetrasAsoc = respAsoc.toLowerCase().replace(/[^a-záéíóúüñ]/g, "");
     if (prohibidas.includes(respAsoc.toLowerCase().trim()) || soloLetrasAsoc === "u" || soloLetrasAsoc.length === 0) {
       const frase = rand(config.phrases) || rand(extras.phrases) || "💀";
-      return msg.reply({ embeds: [crearEmbed(0x808080, "🧠 Patroclo", frase)] });
+      return msg.reply(frase); // texto normal
     }
-    return msg.reply({ embeds: [crearEmbed(0x808080, "🧠 Patroclo", respAsoc)] });
+    return msg.reply(respAsoc); // texto normal
   }
 
   // Respuesta IA
