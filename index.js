@@ -107,31 +107,60 @@ async function renderZoom(minX, maxX, minY, maxY) {
   return canvas.toBuffer();
 }
 
-// ================= IA =================
+// ================= IA CON GROQ + FALLBACK GEMINI =================
 async function IA(contexto, modo) {
-  let sys, prompt;
-
   if (modo === "normal") {
     const frases = config.phrases;
     if (!frases.length) return null;
-    sys = "Elegí UNA frase de la lista FRASES DEL ADN que mejor responda al MENSAJE DEL USUARIO. Respondé solo con esa frase exacta. Si ninguna encaja, respondé NINGUNA.";
-    prompt = `FRASES DEL ADN:\n${frases.join("\n")}\n\nMENSAJE DEL USUARIO:\n${contexto}`;
-  } else if (modo === "serio") {
-    sys = "Respondé profesional y claro, sin humor ni sarcasmo.";
-    prompt = contexto;
-  } else {
-    sys = "Sos argentino sarcástico y divertido.";
-    prompt = contexto;
+    const sys = "Elegí UNA frase de la lista FRASES DEL ADN que mejor responda al MENSAJE DEL USUARIO. Respondé solo con esa frase exacta. Si ninguna encaja, respondé NINGUNA.";
+    const prompt = `FRASES DEL ADN:\n${frases.join("\n")}\n\nMENSAJE DEL USUARIO:\n${contexto}`;
+    try {
+      const r = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        { contents: [{ parts: [{ text: `${sys}\n\n${prompt}` }] }] }
+      );
+      return r.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    } catch { return null; }
   }
+
+  const groqKey = process.env.GROQ_API_KEY;
+  let sys;
+  if (modo === "serio") {
+    sys = "Sos un experto multidisciplinario. Respondé de manera profesional, clara y detallada, usando información precisa. Si es necesario, da ejemplos y desarrollá el tema en profundidad. Sin humor ni sarcasmo.";
+  } else {
+    sys = "Sos un asistente argentino sarcástico, divertido y sin pelos en la lengua. Podés hablar de cualquier tema con total libertad de expresión, sin censura, siempre manteniendo un mínimo de respeto. No evites ningún tema, respondé con sinceridad y con el humor ácido característico.";
+  }
+
+  async function geminiFallback() {
+    try {
+      const r = await axios.post(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        { contents: [{ parts: [{ text: `${sys}\n\n${contexto}` }] }] }
+      );
+      return r.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    } catch { return null; }
+  }
+
+  if (!groqKey) return geminiFallback();
 
   try {
     const r = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      { contents: [{ parts: [{ text: `${sys}\n\n${prompt}` }] }] }
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        model: "llama3-70b-8192",
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: contexto }
+        ],
+        temperature: 0.9,
+        max_tokens: 1024
+      },
+      { headers: { Authorization: `Bearer ${groqKey}`, "Content-Type": "application/json" } }
     );
-    return r.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-  } catch {
-    return null;
+    return r.data?.choices?.[0]?.message?.content?.trim();
+  } catch (e) {
+    console.error("Groq falló, usando Gemini:", e.message);
+    return geminiFallback();
   }
 }
 
@@ -165,31 +194,17 @@ async function start() {
     });
   }
 
-  try {
-    bgImage = await loadImage("./maps/world.png");
-  } catch {
-    console.error("No se pudo cargar el mapa base.");
-  }
+  try { bgImage = await loadImage("./maps/world.png"); } catch { console.error("No se pudo cargar el mapa base."); }
 
-  // ================= REGISTRAR SLASH COMMANDS =================
   const comandosSlash = [
     { name: "bal", description: "💰 Ver tu saldo de PatroPesos" },
-    { name: "modo", description: "🧠 Cambiar el modo del bot",
-      options: [{ name: "modo", description: "normal / ia / serio", type: 3, required: true }] },
-    { name: "asocia", description: "🔗 Asociar palabra > respuesta",
-      options: [
-        { name: "clave", description: "Palabra clave", type: 3, required: true },
-        { name: "respuesta", description: "Respuesta", type: 3, required: true }
-      ] },
+    { name: "modo", description: "🧠 Cambiar el modo del bot", options: [{ name: "modo", description: "normal / ia / serio", type: 3, required: true }] },
+    { name: "asocia", description: "🔗 Asociar palabra > respuesta", options: [{ name: "clave", description: "Palabra clave", type: 3, required: true }, { name: "respuesta", description: "Respuesta", type: 3, required: true }] },
     { name: "gif", description: "🎞️ Buscar un GIF", options: [{ name: "busqueda", description: "Término", type: 3, required: true }] },
     { name: "foto", description: "🖼️ Generar imagen con IA", options: [{ name: "descripcion", description: "Descripción", type: 3, required: true }] },
     { name: "daily", description: "🎁 Reclamar recompensa diaria" },
     { name: "work", description: "💼 Trabajar por PatroPesos" },
-    { name: "pay", description: "💸 Transferir dinero",
-      options: [
-        { name: "usuario", description: "Usuario", type: 6, required: true },
-        { name: "cantidad", description: "Cantidad", type: 4, required: true }
-      ] },
+    { name: "pay", description: "💸 Transferir dinero", options: [{ name: "usuario", description: "Usuario", type: 6, required: true }, { name: "cantidad", description: "Cantidad", type: 4, required: true }] },
     { name: "slot", description: "🎰 Jugar al slot" },
     { name: "ruleta", description: "🎡 Jugar a la ruleta", options: [{ name: "apuesta", description: "Apuesta", type: 4, required: true }] },
     { name: "bj", description: "🃏 Jugar al blackjack", options: [{ name: "apuesta", description: "Apuesta", type: 4 }] },
@@ -203,21 +218,17 @@ async function start() {
     { name: "universefacts", description: "🌌 Dato curioso del universo" },
     { name: "rich", description: "💰 Ranking de los más ricos" },
     { name: "ayuda", description: "📜 Lista de comandos" },
-    { name: "comprar", description: "🛒 Comprar ítems en la tienda",
-      options: [{ name: "item", description: "escudo / multiplicador", type: 3, required: true }] },
+    { name: "comprar", description: "🛒 Comprar ítems en la tienda", options: [{ name: "item", description: "escudo / multiplicador", type: 3, required: true }] },
     { name: "stats", description: "📊 Estadísticas del bot" },
     { name: "actus", description: "📢 Mostrar últimas actualizaciones" },
-    { name: "mantenimiento", description: "🔧 Activar/desactivar modo mantenimiento (admin)",
-      options: [{ name: "activar", description: "true/false", type: 5, required: true }] }
+    { name: "setcanalactus", description: "📌 Configurar canal de actualizaciones (admin)", options: [{ name: "canal", description: "Canal", type: 7, required: true }] },
+    { name: "mantenimiento", description: "🔧 Activar/desactivar modo mantenimiento (admin)", options: [{ name: "activar", description: "true/false", type: 5, required: true }] },
+    { name: "hablar", description: "🔊 Convertir texto a voz (ElevenLabs)", options: [{ name: "texto", description: "Texto a hablar", type: 3, required: true }] }
   ];
 
   client.once("ready", async () => {
-    try {
-      await client.application.commands.set(comandosSlash);
-      console.log("✅ Slash commands registrados globalmente.");
-    } catch (err) {
-      console.error("❌ Error al registrar slash commands:", err);
-    }
+    try { await client.application.commands.set(comandosSlash); console.log("✅ Slash commands registrados globalmente."); }
+    catch (err) { console.error("❌ Error al registrar slash commands:", err); }
   });
 
   await client.login(process.env.TOKEN);
@@ -244,19 +255,26 @@ async function verificarSaldo(source, userId, amount) {
 }
 
 async function obtenerFactDiario() {
-  try {
-    const response = await axios.get("https://api.spaceflightnewsapi.net/v4/articles/?limit=1");
-    if (response.data?.results?.length > 0) {
-      const articulo = response.data.results[0];
-      return `🌠 **${articulo.title}**\n${articulo.summary || ""}\n🔗 ${articulo.url}`;
-    }
-  } catch (e) {
-    console.error("Error al obtener fact de API:", e.message);
+  if (process.env.NEWS_API) {
+    try {
+      const resp = await axios.get(`https://newsapi.org/v2/top-headlines?category=science&language=es&pageSize=1&apiKey=${process.env.NEWS_API}`);
+      if (resp.data?.articles?.length) {
+        const a = resp.data.articles[0];
+        return `📰 **${a.title}**\n${a.description || ""}\n🔗 ${a.url}`;
+      }
+    } catch (e) { console.error("News API falló:", e.message); }
   }
+
+  try {
+    const resp = await axios.get("https://api.spaceflightnewsapi.net/v4/articles/?limit=1");
+    if (resp.data?.results?.length) {
+      const a = resp.data.results[0];
+      return `🌠 **${a.title}**\n${a.summary || ""}\n🔗 ${a.url}`;
+    }
+  } catch (e) { console.error("Error al obtener fact de API:", e.message); }
   return null;
 }
 
-// ================= EMBED MEJORADO =================
 function crearEmbed(color, title, description, options = {}) {
   const { authorUser, thumbnail } = options;
   const embed = new EmbedBuilder()
@@ -271,43 +289,55 @@ function crearEmbed(color, title, description, options = {}) {
   return embed;
 }
 
-// ================= COOLDOWN DE USUARIO (8 MENSAJES) =================
 const userMessageCounts = new Map();
-
 function shouldRespondToUser(msg) {
   const userId = msg.author.id;
   const content = msg.content;
-
   if (msg.reference) return true;
-
   if (content.includes(`@${client.user.id}`) || content.toLowerCase().includes("patroclo")) {
     userMessageCounts.delete(userId);
     return true;
   }
-
   let count = userMessageCounts.get(userId) || 0;
   count++;
   userMessageCounts.set(userId, count);
-
-  if (count >= 8) {
-    userMessageCounts.set(userId, 0);
-    return true;
-  }
+  if (count >= 8) { userMessageCounts.set(userId, 0); return true; }
   return false;
 }
 
-// ================= NOVEDADES PARA !actus =================
 const novedades = [
-  "🎨 Nuevo diseño de embeds con autor y footer.",
-  "🛡️ Tienda con escudo y multiplicador.",
-  "🔧 Comando !mantenimiento para pausar el bot.",
-  "📊 Comando !stats con estadísticas.",
-  "🌌 Universefacts ahora usa API de noticias espaciales.",
-  "🎰 Casino mejorado con nuevos juegos.",
-  "🌐 Soporte multi‑idioma básico (es, en, pt).",
-  "⚡ Cooldown de 8 mensajes para evitar spam.",
-  "💬 Respuesta automática a mensajes reply."
+  "🎨 Embeds estéticos con autor y footer.",
+  "🤖 Groq integrado para modos IA y serio.",
+  "🗞️ Noticias reales en universefacts (News API).",
+  "📍 Geolocalización al pintar píxeles (OpenCage).",
+  "🔊 Comando /hablar con ElevenLabs.",
+  "📢 Canal de actus configurable.",
+  "🛡️ Tienda con escudo y multiplicador."
 ];
+
+async function sintetizarVoz(texto) {
+  if (!process.env.ELEVENLABS_API_KEY) return null;
+  try {
+    const resp = await axios.post(
+      `https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM`,
+      { text: texto, model_id: "eleven_monolingual_v1", voice_settings: { stability: 0.5, similarity_boost: 0.75 } },
+      { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json" }, responseType: "arraybuffer" }
+    );
+    return Buffer.from(resp.data);
+  } catch (e) { console.error("ElevenLabs error:", e.message); return null; }
+}
+
+async function obtenerUbicacion(lat, lon) {
+  if (!process.env.OPENCAGE_KEY) return null;
+  try {
+    const resp = await axios.get(`https://api.opencagedata.com/geocode/v1/json?q=${lat}+${lon}&key=${process.env.OPENCAGE_KEY}&language=es&pretty=1`);
+    if (resp.data?.results?.length) {
+      const comp = resp.data.results[0].components;
+      return `${comp.city || comp.town || comp.state || ""}, ${comp.country || ""}`.trim();
+    }
+  } catch (e) { console.error("OpenCage error:", e.message); }
+  return null;
+}
 
 // ================= INTERACTION HANDLER (SLASH) =================
 client.on("interactionCreate", async interaction => {
@@ -319,11 +349,8 @@ client.on("interactionCreate", async interaction => {
 
   async function replyEmbed(color, title, descripcion, thumbnail) {
     const embed = crearEmbed(color, title, descripcion, { authorUser: interaction.user, thumbnail: thumbnail || interaction.user.displayAvatarURL() });
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({ embeds: [embed] });
-    } else {
-      await interaction.reply({ embeds: [embed] });
-    }
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [embed] });
+    else await interaction.reply({ embeds: [embed] });
   }
 
   if (config.mantenimiento && commandName !== "mantenimiento") {
@@ -333,14 +360,12 @@ client.on("interactionCreate", async interaction => {
   comandosEjecutados++;
 
   try {
-    // ================= MANTENIMIENTO =================
     if (commandName === "mantenimiento") {
       const activar = options.getBoolean("activar");
       config.mantenimiento = activar;
       await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: activar } }, { upsert: true });
       return interaction.reply(`🔧 Modo mantenimiento **${activar ? "activado" : "desactivado"}**.`);
     }
-    // ================= STATS =================
     else if (commandName === "stats") {
       const uptime = Date.now() - uptimeInicio;
       const horas = Math.floor(uptime / 3600000);
@@ -349,17 +374,27 @@ client.on("interactionCreate", async interaction => {
       const desc = `⏱️ Uptime: ${horas}h ${minutos}m\n📚 Frases aprendidas: ${frasesAprendidas}\n🔢 Comandos ejecutados: ${comandosEjecutados}`;
       await replyEmbed(0x3498DB, "📊 Estadísticas", desc);
     }
-    // ================= ACTUS =================
     else if (commandName === "actus") {
-      const canalId = config.canalActus;
-      if (!canalId) return interaction.reply("❌ No hay canal de actualizaciones configurado.");
-      const canal = client.channels.cache.get(canalId);
+      if (!config.canalActus) return interaction.reply("❌ No hay canal configurado. Usá `/setcanalactus`.");
+      const canal = client.channels.cache.get(config.canalActus);
       if (!canal) return interaction.reply("❌ No se encontró el canal.");
-      const texto = novedades.join("\n");
-      await canal.send({ embeds: [crearEmbed(0x9B59B6, "📢 Novedades de Patroclo", texto)] });
-      await interaction.reply("✅ Novedades enviadas al canal correspondiente.");
+      await canal.send({ embeds: [crearEmbed(0x9B59B6, "📢 Novedades de Patroclo", novedades.join("\n"))] });
+      await interaction.reply("✅ Novedades enviadas.");
     }
-    // ================= TIENDA =================
+    else if (commandName === "setcanalactus") {
+      if (!interaction.member.permissions.has("Administrator")) return interaction.reply({ content: "❌ Sin permisos.", ephemeral: true });
+      const canal = options.getChannel("canal");
+      config.canalActus = canal.id;
+      await dataColl.updateOne({ id: "main_config" }, { $set: { canalActus: canal.id } }, { upsert: true });
+      return interaction.reply(`✅ Canal de actus configurado a ${canal}.`);
+    }
+    else if (commandName === "hablar") {
+      await interaction.deferReply();
+      const texto = options.getString("texto");
+      const audio = await sintetizarVoz(texto);
+      if (!audio) return interaction.editReply("❌ No se pudo generar el audio.");
+      await interaction.editReply({ files: [new AttachmentBuilder(audio, "voz.mp3")] });
+    }
     else if (commandName === "comprar") {
       const item = options.getString("item").toLowerCase();
       if (!["escudo", "multiplicador"].includes(item)) return interaction.reply("❌ Ítem no válido. Usá `escudo` o `multiplicador`.");
@@ -376,7 +411,6 @@ client.on("interactionCreate", async interaction => {
       );
       await replyEmbed(0xFFD700, "🛒 Tienda", `¡Compraste **${item}** por **$${precio}**!\nExpira <t:${Math.floor(expira/1000)}:R>.`);
     }
-    // ================= ECONOMÍA =================
     else if (commandName === "bal") {
       const u = await usersColl.findOne({ userId }) || { points: 0 };
       await replyEmbed(0x00FF00, "💰 PatroPesos", `${t("saldo", guild)}: **$${u.points}**`);
@@ -600,12 +634,10 @@ client.on("interactionCreate", async interaction => {
       await usersColl.updateOne({ userId }, { $inc: { points: gol ? bet : -bet } }, { upsert: true });
       await interaction.reply({ embeds: [crearEmbed(gol ? 0xFFD700 : 0xFF0000, "⚽ Penal", gol ? `¡GOL! Ganaste $${bet} ${rand(frasesArgentinas)}` : `🧤 Atajado. Perdiste $${bet}`, { authorUser: interaction.user })] });
     }
-    // ================= MAPA =================
     else if (commandName === "place") {
       const img = await renderPlace();
       await interaction.reply({ files: [new AttachmentBuilder(img, "map.png")], embeds: [crearEmbed(0x1E90FF, t("mapa_titulo", guild), "🌍")] });
     }
-    // ================= UNIVERSO =================
     else if (commandName === "universefacts") {
       const doc = await universeFactsColl.findOne({ id: "daily_facts" });
       if (!doc) return interaction.reply(t("universo_silencio", guild));
@@ -631,15 +663,13 @@ client.on("interactionCreate", async interaction => {
       }
       await interaction.reply({ embeds: [crearEmbed(0x9B59B6, "🌌 Dato del universo", fact)] });
     }
-    // ================= RANKINGS =================
     else if (commandName === "rich") {
       const top = await usersColl.find().sort({ points: -1 }).limit(10).toArray();
       const desc = top.map((u, i) => `${i + 1}. $${u.points}`).join("\n") || "Nadie tiene dinero aún.";
       await replyEmbed(0xFFD700, t("ranking_titulo", guild), desc);
     }
-    // ================= AYUDA =================
     else if (commandName === "ayuda") {
-      const texto = `🎨 MAPA: /place, /pixel, /zoom, /zoomlat, /territorio, /comprarlote, /guerra, /topplace\n📷 MULTIMEDIA: /gif, /foto\n🌌 EXTRAS: /universefacts\n💰 ECONOMÍA: /bal, /daily, /work, /pay, /rich\n🎰 CASINO: /slot, /ruleta, /bj, /dados, /carrera, /crash, /poker, /coinflip, /penal\n🧠 IA: /modo, /asocia\n🛒 TIENDA: /comprar\n📊 STATS: /stats\n📢 ACTUS: /actus\n🔧 MANTENIMIENTO: /mantenimiento\n\n🔥 Aprende automáticamente del chat.`;
+      const texto = `🎨 MAPA: /place, /pixel, /zoom, /zoomlat, /territorio, /comprarlote, /guerra, /topplace\n📷 MULTIMEDIA: /gif, /foto\n🌌 EXTRAS: /universefacts\n💰 ECONOMÍA: /bal, /daily, /work, /pay, /rich\n🎰 CASINO: /slot, /ruleta, /bj, /dados, /carrera, /crash, /poker, /coinflip, /penal\n🧠 IA: /modo, /asocia\n🛒 TIENDA: /comprar\n📊 STATS: /stats\n📢 ACTUS: /actus\n🔊 HABLAR: /hablar\n🔧 MANTENIMIENTO: /mantenimiento\n\n🔥 Aprende automáticamente del chat.`;
       await replyEmbed(0x9B59B6, "📜 Ayuda", texto);
     }
   } catch (err) {
@@ -657,12 +687,10 @@ client.on("messageCreate", async msg => {
 
   if (config.mantenimiento && !msg.content.startsWith("!mantenimiento")) return;
 
-  // Aprendizaje
   if (!msg.content.startsWith("!") && texto.length > 1) {
     await dataColl.updateOne({ id: "main_config" }, { $addToSet: { phrases: texto } }, { upsert: true });
   }
 
-  // Reacciones automáticas
   if (extras.reacciones_auto?.palabras_clave?.length) {
     const alguna = extras.reacciones_auto.palabras_clave.some(p => content.includes(p.toLowerCase()));
     if (alguna) {
@@ -671,24 +699,20 @@ client.on("messageCreate", async msg => {
     }
   }
 
-  // ================= COMANDOS ! =================
   if (msg.content.startsWith("!")) {
     const args = msg.content.slice(1).split(" ");
     const cmd = args.shift().toLowerCase();
-
     comandosEjecutados++;
 
     const responder = (color, title, desc) => msg.reply({ embeds: [crearEmbed(color, title, desc, { authorUser: msg.author })] });
 
-    // ================= MANTENIMIENTO =================
     if (cmd === "mantenimiento") {
-      if (!msg.member.permissions.has("Administrator")) return msg.reply("❌ No tenés permisos.");
+      if (!msg.member.permissions.has("Administrator")) return msg.reply("❌ Sin permisos.");
       const activar = args[0] === "on" || args[0] === "true" || args[0] === "1";
       config.mantenimiento = activar;
       await dataColl.updateOne({ id: "main_config" }, { $set: { mantenimiento: activar } }, { upsert: true });
       return msg.reply(`🔧 Modo mantenimiento **${activar ? "activado" : "desactivado"}**.`);
     }
-    // ================= STATS =================
     else if (cmd === "stats") {
       const uptime = Date.now() - uptimeInicio;
       const horas = Math.floor(uptime / 3600000);
@@ -698,17 +722,28 @@ client.on("messageCreate", async msg => {
       await responder(0x3498DB, "📊 Estadísticas", desc);
       return;
     }
-    // ================= ACTUS =================
     else if (cmd === "actus") {
-      const canalId = config.canalActus;
-      if (!canalId) return msg.reply("❌ No hay canal de actualizaciones configurado.");
-      const canal = client.channels.cache.get(canalId);
+      if (!config.canalActus) return msg.reply("❌ No hay canal de actualizaciones configurado. Usá !setcanalactus.");
+      const canal = client.channels.cache.get(config.canalActus);
       if (!canal) return msg.reply("❌ No se encontró el canal.");
-      const texto = novedades.join("\n");
-      await canal.send({ embeds: [crearEmbed(0x9B59B6, "📢 Novedades de Patroclo", texto)] });
-      return msg.reply("✅ Novedades enviadas al canal correspondiente.");
+      await canal.send({ embeds: [crearEmbed(0x9B59B6, "📢 Novedades de Patroclo", novedades.join("\n"))] });
+      return msg.reply("✅ Novedades enviadas.");
     }
-    // ================= TIENDA =================
+    else if (cmd === "setcanalactus" || cmd === "canalactus") {
+      if (!msg.member.permissions.has("Administrator")) return msg.reply("❌ Sin permisos.");
+      const canal = msg.mentions.channels.first();
+      if (!canal) return msg.reply("❌ Mencioná un canal: `!setcanalactus #canal`");
+      config.canalActus = canal.id;
+      await dataColl.updateOne({ id: "main_config" }, { $set: { canalActus: canal.id } }, { upsert: true });
+      return msg.reply(`✅ Canal de actus configurado a ${canal}.`);
+    }
+    else if (cmd === "hablar") {
+      const texto = args.join(" ");
+      if (!texto) return msg.reply("❌ Escribí algo para hablar.");
+      const audio = await sintetizarVoz(texto);
+      if (!audio) return msg.reply("❌ Error al generar audio.");
+      return msg.reply({ files: [new AttachmentBuilder(audio, "voz.mp3")] });
+    }
     else if (cmd === "comprar") {
       const item = args[0]?.toLowerCase();
       if (!["escudo", "multiplicador"].includes(item)) return msg.reply("❌ Ítem no válido. Usá `escudo` o `multiplicador`.");
@@ -725,7 +760,6 @@ client.on("messageCreate", async msg => {
       );
       return msg.reply({ embeds: [crearEmbed(0xFFD700, "🛒 Tienda", `¡Compraste **${item}** por **$${precio}**!\nExpira <t:${Math.floor(expira/1000)}:R>.`, { authorUser: msg.author })] });
     }
-    // ================= ECONOMÍA =================
     else if (cmd === "bal") {
       const u = await usersColl.findOne({ userId: msg.author.id }) || { points: 0 };
       await responder(0x00FF00, "💰 PatroPesos", `${t("saldo", guild)}: **$${u.points}**`);
@@ -983,6 +1017,14 @@ client.on("messageCreate", async msg => {
       if (Date.now() - last < 3000) return msg.reply("⏳ espera 3 segundos");
       cooldown.set(msg.author.id, Date.now());
       await placeColl.updateOne({ x, y }, { $set: { color, guildId: msg.guild.id } }, { upsert: true });
+
+      // Geolocalización opcional con OpenCage
+      if (process.env.OPENCAGE_KEY && a && b) {
+        const ubicacion = await obtenerUbicacion(a, b);
+        if (ubicacion) {
+          return msg.reply(`🎨 pixel puesto (${x},${y}) - 📍 ${ubicacion}`);
+        }
+      }
       return msg.reply(`🎨 pixel puesto (${x},${y})`);
     }
     else if (cmd === "topplace") {
@@ -1027,19 +1069,18 @@ client.on("messageCreate", async msg => {
     }
     // ================= AYUDA =================
     else if (cmd === "ayudacmd" || cmd === "ayuda") {
-      const texto = `🎨 MAPA: !place, !pixel, !zoom, !zoomlat, !territorio, !comprarlote, !guerra, !topplace\n📷 MULTIMEDIA: !gif, !foto\n🌌 EXTRAS: !universefacts\n💰 ECONOMÍA: !bal, !daily, !work, !pay, !rich\n🎰 CASINO: !slot, !ruleta, !bj, !dados, !carrera, !crash, !poker, !coinflip, !penal\n🧠 IA: !modo, !asocia\n🛒 TIENDA: !comprar\n📊 STATS: !stats\n📢 ACTUS: !actus\n🔧 MANTENIMIENTO: !mantenimiento\n\n🔥 Aprende automáticamente del chat.`;
+      const texto = `🎨 MAPA: !place, !pixel, !zoom, !zoomlat, !territorio, !comprarlote, !guerra, !topplace\n📷 MULTIMEDIA: !gif, !foto\n🌌 EXTRAS: !universefacts\n💰 ECONOMÍA: !bal, !daily, !work, !pay, !rich\n🎰 CASINO: !slot, !ruleta, !bj, !dados, !carrera, !crash, !poker, !coinflip, !penal\n🧠 IA: !modo, !asocia\n🛒 TIENDA: !comprar\n📊 STATS: !stats\n📢 ACTUS: !actus\n🔊 HABLAR: !hablar\n🔧 MANTENIMIENTO: !mantenimiento\n\n🔥 Aprende automáticamente del chat.`;
       return msg.reply({ embeds: [crearEmbed(0x9B59B6, "📜 Ayuda", texto)] });
     }
 
-    return; // Salir después de un comando
+    return;
   }
 
-  // ================= RESPUESTAS IA (con cooldown y reply) =================
+  // ================= RESPUESTAS IA =================
   if (!shouldRespondToUser(msg)) return;
 
   const esReply = !!msg.reference;
 
-  // Asociaciones
   const allAsoc = await asociaColl.find().toArray();
   const asoc = allAsoc.find(a => content.includes(a.clave?.toLowerCase()?.trim()));
   if (asoc) {
@@ -1057,7 +1098,6 @@ client.on("messageCreate", async msg => {
     }
   }
 
-  // IA
   let contexto = msg.content;
   if (esReply) {
     try {
