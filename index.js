@@ -316,11 +316,9 @@ const novedades = [
 ];
 
 async function sintetizarVoz(texto) {
-  console.log("DEBUG: ELEVENLABS_API_KEY =", process.env.ELEVENLABS_API_KEY ? "OK (longitud " + process.env.ELEVENLABS_API_KEY.length + ")" : "NO DEFINIDA");
   if (!process.env.ELEVENLABS_API_KEY) return null;
   try {
     const resp = await axios.post(
-      
       `https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM`,
       { text: texto, model_id: "eleven_monolingual_v1", voice_settings: { stability: 0.5, similarity_boost: 0.75 } },
       { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY, "Content-Type": "application/json" }, responseType: "arraybuffer" }
